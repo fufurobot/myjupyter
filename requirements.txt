@@ -1,0 +1,84 @@
+# web interfaces
+
+jupyter
+marimo
+streamlit
+plotly
+matplotlib
+tqdm
+
+# cli/tui interface
+
+typer
+rich
+
+# big data
+
+pandas
+numba
+cuDF
+pyarrow
+dask
+bloomkv
+
+# machine learning
+
+statsmodels
+scikit-learn
+mlxtend
+skorch
+transformers
+torch # hint: this shall be installed by checking nvidia-smi for proper cuda version
+huggingface-hub
+
+# image processing
+
+opencv-python
+pillow
+ultralytics
+
+# automation
+
+asyncvnc
+asyncssh
+playwright
+pynput
+
+# domains
+
+## mahjong
+
+riichienv
+mahjong
+jansou
+
+## esp32
+
+micropython-esp32-stubs
+esptool
+mpremote
+
+## chinese/NLP
+
+regex
+pywubi
+pypinyin
+nltk
+spacy
+tree-sitter-language-pack
+langchain
+
+## math
+
+sympy
+transfinite
+pysmt
+mathesis
+networkx
+
+# Linux-specific: these has been proven not work on windows with uv without MSVC toolchain.
+
+ray
+litellm
+pygame
+PyMahjongGB
