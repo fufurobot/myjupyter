@@ -1,4 +1,4 @@
-# web interfaces
+# gui interfaces
 
 jupyter
 marimo
@@ -6,6 +6,7 @@ streamlit
 plotly
 matplotlib
 tqdm
+pygame
 
 # cli/tui interface
 
@@ -16,10 +17,10 @@ rich
 
 pandas
 numba
-cuDF
 pyarrow
 dask
 bloomkv
+ray
 
 # machine learning
 
@@ -67,6 +68,7 @@ nltk
 spacy
 tree-sitter-language-pack
 langchain
+litellm
 
 ## math
 
@@ -78,7 +80,13 @@ networkx
 
 # Linux-specific: these has been proven not work on windows with uv without MSVC toolchain.
 
-ray
-litellm
-pygame
-PyMahjongGB
+# cuDF Exception: Please install cudf via the rapidsai conda channel. See https://rapids.ai/start.html for instructions.
+
+# PyMahjongGB
+
+# building 'MahjongGB' extension
+#
+#      [stderr]
+#      error: Microsoft Visual C++ 14.0 or greater is required. Get it with "Microsoft C++ Build Tools":
+#      https://visualstudio.microsoft.com/visual-cpp-build-tools/
+#
