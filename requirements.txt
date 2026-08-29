@@ -78,6 +78,7 @@ networkx
 
 # Linux-specific: these has been proven not work on windows with uv without MSVC toolchain.
 
+mojo
 ray
 litellm
 pygame
