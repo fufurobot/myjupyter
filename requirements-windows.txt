@@ -23,7 +23,8 @@ dask
 bloomkv
 ray
 warcio
-
+cryptography
+fa-htmlstream
 
 # machine learning
 
