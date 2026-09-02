@@ -7,6 +7,7 @@ plotly
 matplotlib
 tqdm
 pygame
+segno
 
 # cli/tui interface
 
@@ -21,6 +22,8 @@ pyarrow
 dask
 bloomkv
 ray
+warcio
+
 
 # machine learning
 
@@ -44,6 +47,7 @@ asyncvnc
 asyncssh
 playwright
 pynput
+git+https://github.com/fufurobot/deepseek-tools
 
 # domains
 
@@ -69,6 +73,7 @@ spacy
 tree-sitter-language-pack
 langchain
 litellm
+beautifulsoup4
 
 ## math
 
