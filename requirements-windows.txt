@@ -25,6 +25,8 @@ ray
 warcio
 cryptography
 fa-htmlstream
+datalad
+git-annex
 
 # machine learning
 
@@ -33,7 +35,7 @@ scikit-learn
 mlxtend
 skorch
 transformers
-torch # hint: this shall be installed by checking nvidia-smi for proper cuda version
+torch # hint: this shall be installed by checking nvidia-smi for proper cuda version, or else the cpu version is installed. 
 huggingface-hub
 
 # image processing
@@ -75,6 +77,13 @@ tree-sitter-language-pack
 langchain
 litellm
 beautifulsoup4
+MIDIUtil
+lxml
+openpyxl
+html5lib
+python-docx
+pdfplumber
+pdfminer.six
 
 ## math
 
@@ -86,9 +95,13 @@ networkx
 
 # Linux-specific: these has been proven not work on windows with uv without MSVC toolchain.
 
-# cuDF Exception: Please install cudf via the rapidsai conda channel. See https://rapids.ai/start.html for instructions.
+## cuDF: 
 
-# PyMahjongGB
+# Exception: Please install cudf via the rapidsai conda channel. See https://rapids.ai/start.html for instructions.
+
+## PyMahjongGB: 
+
+### MahjongGB:
 
 # building 'MahjongGB' extension
 #
@@ -96,3 +109,13 @@ networkx
 #      error: Microsoft Visual C++ 14.0 or greater is required. Get it with "Microsoft C++ Build Tools":
 #      https://visualstudio.microsoft.com/visual-cpp-build-tools/
 #
+
+## jupyterhub:
+
+# requires PAMAuthenticator. jupyterhub official plan to not support.
+
+# Windows-specific: these has been proven not work on linux with uv.
+
+## xlwings:
+
+# plan to not support because it operates on Microsoft Excel.
