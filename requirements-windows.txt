@@ -35,7 +35,7 @@ scikit-learn
 mlxtend
 skorch
 transformers
-torch # hint: this shall be installed by checking nvidia-smi for proper cuda version, or else the cpu version is installed. 
+torch; python_version >= "3.14" # hint: this shall be installed by checking nvidia-smi for proper cuda version, or else the cpu version is installed. 
 huggingface-hub
 
 # image processing
