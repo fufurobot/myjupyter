@@ -14,6 +14,22 @@ segno
 typer
 rich
 
+# networking
+python-nmap
+dnspython
+zeroconf
+scapy
+pyshark
+requests
+py-netrecon
+icmplib
+ping3
+nmcli
+flent
+iperf3
+pyp0f
+
+
 # big data
 
 pandas
