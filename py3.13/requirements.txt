@@ -15,6 +15,7 @@ typer
 rich
 
 # networking
+
 python-nmap
 dnspython
 zeroconf
@@ -28,7 +29,10 @@ nmcli
 flent
 iperf3
 pyp0f
-
+graphql-core
+fastapi
+uvicorn
+openai
 
 # big data
 
@@ -100,6 +104,10 @@ html5lib
 python-docx
 pdfplumber
 pdfminer.six
+
+## sequence data
+
+
 
 ## math
 
