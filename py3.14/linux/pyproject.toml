@@ -91,12 +91,6 @@ dependencies = [
     "zeroconf>=0.151.3",
 ]
 
-[project.scripts]
-linux = "linux:main"
-
-[build-system]
-requires = ["uv_build>=0.12.18,<0.13.0"]
-build-backend = "uv_build"
 
 [tool.uv.sources]
 deepseek-tools = { git = "https://github.com/fufurobot/deepseek-tools" }
