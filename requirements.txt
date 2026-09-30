@@ -115,6 +115,8 @@ sympy
 transfinite
 pysmt
 mathesis
+# knuckledragger all of: knuckledragger<=0.1.4a1 knuckledragger>=0.3.0 only support >=3.12)
+# tinylean tinylean only support >=3.12
 networkx
 
 # Linux-specific: these has been proven not work on windows with uv without MSVC toolchain.
