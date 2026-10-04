@@ -1,3 +1,18 @@
+# dev pack
+ruff
+ty
+mypy
+flake
+pytest
+pytest-asyncio
+pytest-cov
+pytest-mock
+pytest-xdist
+flake8
+pylint
+pyright
+
+
 # gui interfaces
 
 jupyter
@@ -63,6 +78,9 @@ huggingface-hub
 opencv-python
 pillow
 ultralytics
+svglib          # SVG -> PNG (via reportlab, no alpha channel)
+reportlab       # required backend for svglib's PNG rendering
+potracer        # PNG -> SVG (black & white only, pure Python port of Potrace)
 
 # automation
 
@@ -104,10 +122,9 @@ html5lib
 python-docx
 pdfplumber
 pdfminer.six
+chm-converter
 
 ## sequence data
-
-
 
 ## math
 
