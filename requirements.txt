@@ -2,7 +2,7 @@
 ruff
 ty
 mypy
-flake
+flake8
 pytest
 pytest-asyncio
 pytest-cov
@@ -122,7 +122,7 @@ html5lib
 python-docx
 pdfplumber
 pdfminer.six
-chm-converter
+pychm
 branch-statement-analyzer
 
 ## sequence data

@@ -1,0 +1,2 @@
+change project structure. let us use <platform(windows/unix)>/<distro name(winxp, win7, win10, win11, macos, ubuntu, debian, archlinux, guix, nixOS)>/<python version from 3.10 to latest> to arange the project, and use a github ci matrix to submit pull requests for this project daily (if no remote update, do not submit pull request)
+also, fix pychm build error on this machine and append to preinstall.sh
