@@ -1,84 +1,67 @@
-# preinstall.sh - Carefully install configurable-http-proxy with fallback package managers
-# Priority: bun > deno > pnpm > yarn > npm
-
+#!/usr/bin/env bash
+# preinstall.sh - Arch Linux (unix) preinstall for myjupyter.
+#
+# Layered by distro on purpose: native package managers and package NAMES
+# differ per distribution. The canonical example is the `pychm` build.
 set -euo pipefail
 
-PKG="configurable-http-proxy"
+DISTRO="archlinux"
+PYTHON_VERSION="3.14"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$HERE/../../.." && pwd)"
 
-log()  { printf '\033[1;34m[preinstall]\033[0m %s\n' "$*" >&2; }
-warn() { printf '\033[1;33m[preinstall]\033[0m %s\n' "$*" >&2; }
-err()  { printf '\033[1;31m[preinstall]\033[0m %s\n' "$*" >&2; }
-
+log()  { printf '\033[1;34m[preinstall:archlinux]\033[0m %s\n' "$*" >&2; }
+warn() { printf '\033[1;33m[preinstall:archlinux]\033[0m %s\n' "$*" >&2; }
+err()  { printf '\033[1;31m[preinstall:archlinux]\033[0m %s\n' "$*" >&2; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# --- 1. Check if already installed -----------------------------------------
-if have configurable-http-proxy; then
-  log "configurable-http-proxy already installed at: $(command -v configurable-http-proxy)"
-  exit 0
-fi
+SUDO=""
+detect_sudo() {
+  if [ "$(id -u)" -eq 0 ]; then SUDO=""; return 0; fi
+  if have sudo && sudo -n true 2>/dev/null; then SUDO="sudo"; return 0; fi
+  SUDO=""
+  return 1
+}
 
-# --- 2. Pick the best available package manager ----------------------------
-# bun > deno > pnpm > yarn > npm
-PM=""
-INSTALL_CMD=""
-
-if have bun; then
-  PM="bun"
-  INSTALL_CMD="bun install -g $PKG"
-elif have deno; then
-  PM="deno"
-  # deno doesn't have a true "global install" like npm; use install -gfn
-  # which installs an executable into $DENO_INSTALL_ROOT/bin (default ~/.deno/bin)
-  INSTALL_CMD="deno install -gfn configurable-http-proxy npm:$PKG"
-elif have pnpm; then
-  PM="pnpm"
-  INSTALL_CMD="pnpm add -g $PKG"
-elif have yarn; then
-  PM="yarn"
-  INSTALL_CMD="yarn global add $PKG"
-elif have npm; then
-  PM="npm"
-  INSTALL_CMD="npm install -g $PKG"
-else
-  err "No supported package manager found (bun, deno, pnpm, yarn, npm)."
-  err "Please install one of them first."
+require_elevation() {
+  err "cannot install system packages: not root and passwordless sudo is unavailable."
+  err "re-run with elevated privileges, or pre-install the packages listed above."
   exit 1
-fi
+}
 
-log "Using package manager: $PM"
-log "Running: $INSTALL_CMD"
+# ---------------------------------------------------------------------------
+# 1. Native chmlib - REQUIRED to build pychm (see scripts/libchm.sh)
+# ---------------------------------------------------------------------------
+# Without it: chm/chmlib_search.h:4:10: fatal error: chm_lib.h: No such file or directory
+# shellcheck source=/dev/null
+. "$REPO_ROOT/scripts/libchm.sh"
+LIBCHM_LOG_PREFIX="preinstall:archlinux"
 
-# --- 3. Verify the install root is on PATH --------------------------------
-if [ "$PM" = "deno" ] && ! echo ":$PATH:" | grep -q ":$HOME/.deno/bin:"; then
-  warn "\$HOME/.deno/bin is not on your PATH."
-  warn "Add this to your shell rc:  export PATH=\"\$HOME/.deno/bin:\$PATH\""
-fi
+install_native_deps() {
+  if ensure_libchm "$DISTRO"; then
+    log "chmlib OK"
+  else
+    err "chmlib unavailable; pychm will fail to compile."
+    exit 1
+  fi
 
-# --- 4. Run the install -----------------------------------------------------
-# shellcheck disable=SC2086
-if ! $INSTALL_CMD; then
-  err "Install failed with $PM."
-  exit 1
-fi
+  # Extra system libraries that some wheels need to build/link on Arch.
+  local pkgs=()
+  have node || pkgs+=(nodejs)
+  have npm  || pkgs+=(npm)
+  if [ ${#pkgs[@]} -gt 0 ]; then
+    detect_sudo || require_elevation
+    # shellcheck disable=SC2086
+    $SUDO pacman -S --needed --noconfirm "${pkgs[@]}"
+  fi
+}
 
-# --- 5. Verify ---------------------------------------------------------------
-# Refresh command hash table in case PATH entry was just added
-hash -r 2>/dev/null || true
+# ---------------------------------------------------------------------------
+# 2. Main
+# ---------------------------------------------------------------------------
+main() {
+  install_native_deps
+  log "preinstall complete for $DISTRO (python $PYTHON_VERSION)"
+}
 
-if have configurable-http-proxy; then
-  log "Success: $(command -v configurable-http-proxy)"
-else
-  # Try common fallback locations
-  for p in "$HOME/.deno/bin/configurable-http-proxy" \
-           "$HOME/.bun/bin/configurable-http-proxy" \
-           "$(npm bin -g 2>/dev/null)/configurable-http-proxy" \
-           /usr/local/bin/configurable-http-proxy; do
-    if [ -x "$p" ]; then
-      warn "Installed at $p but not on PATH."
-      warn "Add its directory to PATH, e.g.:  export PATH=\"$(dirname "$p"):\$PATH\""
-      exit 0
-    fi
-  done
-  err "Install reported success but binary not found on PATH."
-  exit 1
-fi
+main "$@"

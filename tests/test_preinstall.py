@@ -33,8 +33,22 @@ cl = _load_check_layout()
 TARGETS = [(d, cl.platform_for_distro(d)) for d in cl.DISTROS]
 
 
+def target_dir(distro: str) -> Path:
+    """Return the existing ``<platform>/<distro>/<python-version>`` directory.
+
+    Any supported python version is acceptable: a distro may target several,
+    and the preinstall script then lives in each of them.
+    """
+    base = REPO_ROOT / cl.platform_for_distro(distro) / distro
+    for version in cl.PYTHON_VERSIONS:
+        candidate = base / version
+        if candidate.is_dir():
+            return candidate
+    pytest.fail(f"no <python-version> directory under {base}")
+
+
 def preinstall_path(distro: str) -> Path:
-    return REPO_ROOT / cl.platform_for_distro(distro) / distro / "preinstall.sh"
+    return target_dir(distro) / "preinstall.sh"
 
 
 # --------------------------------------------------------------------------

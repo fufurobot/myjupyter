@@ -219,3 +219,6 @@ __marimo__/
 
 # pytest
 .pytest_cache/
+
+# uv
+.uv-cache/
