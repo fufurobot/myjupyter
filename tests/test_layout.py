@@ -64,7 +64,7 @@ class TestVocabularies:
         assert cl.PYTHON_VERSIONS[0] == "3.10"
 
     def test_python_versions_are_contiguous_from_310(self):
-        assert cl.PYTHON_VERSIONS == [
+        assert list(cl.PYTHON_VERSIONS) == [
             "3.10", "3.11", "3.12", "3.13", "3.14",
         ]
 
