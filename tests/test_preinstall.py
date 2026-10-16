@@ -198,3 +198,110 @@ class TestPackageManagerCommands:
     def test_no_hardcoded_root_only_path(self, distro):
         text = preinstall_path(distro).read_text(encoding="utf-8")
         assert "/root/" not in text, f"{distro} hardcodes /root"
+
+
+# --------------------------------------------------------------------------
+# Line endings (regression: CI on Windows checked .sh files out as CRLF)
+# --------------------------------------------------------------------------
+
+class TestLineEndingsPinned:
+    """Shell scripts must stay LF even when checked out on Windows.
+
+    Without ``.gitattributes`` Git's ``core.autocrlf`` rewrites ``*.sh`` to CRLF
+    on Windows runners, and ``bash script.sh`` then fails with
+    ``$'\\r': command not found``. The repository must pin this, not rely on
+    each developer's Git configuration.
+    """
+
+    def test_gitattributes_exists(self):
+        assert (REPO_ROOT / ".gitattributes").is_file(), (
+            "a .gitattributes is required to pin line endings across platforms"
+        )
+
+    def test_gitattributes_pins_sh_to_lf(self):
+        text = (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8")
+        assert re.search(r"^\*\.sh\s+.*eol=lf", text, re.MULTILINE), (
+            "*.sh must be pinned to eol=lf"
+        )
+
+    def test_gitattributes_pins_ps1_to_crlf(self):
+        text = (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8")
+        assert re.search(r"^\*\.ps1\s+.*eol=crlf", text, re.MULTILINE), (
+            "*.ps1 must be pinned to eol=crlf for PowerShell"
+        )
+
+    def test_gitattributes_pins_python_to_lf(self):
+        text = (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8")
+        assert re.search(r"^\*\.py\s+.*eol=lf", text, re.MULTILINE)
+
+    def test_gitattributes_marks_shell_scripts_as_text(self):
+        text = (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8")
+        assert "text" in text
+
+    @pytest.mark.parametrize("distro", cl.DISTROS)
+    def test_git_index_stores_sh_with_lf(self, distro):
+        """The blob in Git must contain no CR, whatever the working tree has."""
+        rel = preinstall_path(distro).relative_to(REPO_ROOT).as_posix()
+        result = subprocess.run(
+            ["git", "show", f"HEAD:{rel}"],
+            cwd=REPO_ROOT, capture_output=True,
+        )
+        if result.returncode != 0:
+            pytest.skip(f"{rel} not committed yet")
+        assert b"\r\n" not in result.stdout, (
+            f"{rel} is stored in Git with CRLF and will break on unix"
+        )
+
+
+# --------------------------------------------------------------------------
+# Windows provisioning robustness (regression: vcpkg's chmlib port is broken)
+# --------------------------------------------------------------------------
+
+class TestWindowsLibchmRobustness:
+    """The vcpkg ``chmlib`` port currently fails: upstream jedrea.com 404s.
+
+    Windows provisioning therefore must not depend on a single source, and
+    must not hard-fail the whole preinstall when only chmlib is unavailable.
+    """
+
+    def test_ps1_falls_back_beyond_a_single_source(self):
+        text = (REPO_ROOT / "windows" / "win11" / "3.13" / "preinstall.ps1").read_text(
+            encoding="utf-8"
+        )
+        sources = sum(
+            marker in text.lower()
+            for marker in ("vcpkg", "choco", "pacman", "winget", "msys")
+        )
+        assert sources >= 3, (
+            "preinstall.ps1 must try several providers, since any one can be broken"
+        )
+
+    def test_ps1_does_not_hard_fail_when_chmlib_is_unavailable(self):
+        text = (REPO_ROOT / "windows" / "win11" / "3.13" / "preinstall.ps1").read_text(
+            encoding="utf-8"
+        )
+        # It must warn and continue rather than `exit 1` on a merely optional dep.
+        assert "Write-Warn" in text
+
+    def test_ps1_exports_include_and_lib_paths_for_pip(self):
+        text = (REPO_ROOT / "windows" / "win11" / "3.13" / "preinstall.ps1").read_text(
+            encoding="utf-8"
+        )
+        assert "INCLUDE" in text or "CFLAGS" in text, (
+            "pip needs INCLUDE/CFLAGS pointing at chmlib to compile pychm"
+        )
+
+    def test_ps1_documents_the_known_broken_port(self):
+        text = (REPO_ROOT / "windows" / "win11" / "3.13" / "preinstall.ps1").read_text(
+            encoding="utf-8"
+        )
+        assert "jedrea" in text or "404" in text or "known" in text.lower(), (
+            "the broken upstream vcpkg port should be documented to save debugging"
+        )
+
+    def test_ps1_targets_a_real_chmlib_artifact(self):
+        """If it downloads chmlib itself, the URL must not be the dead one."""
+        text = (REPO_ROOT / "windows" / "win11" / "3.13" / "preinstall.ps1").read_text(
+            encoding="utf-8"
+        )
+        assert "jedrea.com/chmlib/chmlib-0.40.zip" not in text
