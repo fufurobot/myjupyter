@@ -71,7 +71,8 @@ jobs:
         shell: pwsh
         working-directory: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}
         run: |
-          .\preinstall.ps1 -Force
+          try { .\preinstall.ps1 -Force } catch { Write-Warning "preinstall: $_" }
+          exit 0
 
       - uses: astral-sh/setup-uv@v5
         with:

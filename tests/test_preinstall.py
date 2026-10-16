@@ -51,6 +51,43 @@ def preinstall_path(distro: str) -> Path:
     return target_dir(distro) / "preinstall.sh"
 
 
+def find_real_bash() -> str | None:
+    """Return a POSIX bash that can actually parse a script.
+
+    On Windows runners the bare ``bash`` on PATH is the **WSL stub**, which
+    prints "Distributions can be installed by visiting the Microsoft Store"
+    and exits 1 for any argument. Git for Windows ships the real bash; prefer
+    it explicitly, then fall back to a verified bare ``bash``.
+    """
+    candidates = [
+        # Git for Windows (the real thing on a Windows runner).
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files\Git\usr\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\bin\bash.exe",
+        # MSYS2.
+        r"C:\msys64\usr\bin\bash.exe",
+        r"C:\msys64\ucrt64\bin\bash.exe",
+        # Everything else.
+        "bash",
+    ]
+    for candidate in candidates:
+        if candidate != "bash" and not Path(candidate).is_file():
+            continue
+        try:
+            probe = subprocess.run(
+                [candidate, "-c", "echo ok"],
+                capture_output=True, text=True, timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if probe.returncode == 0 and "ok" in probe.stdout:
+            return candidate
+    return None
+
+
+REAL_BASH = find_real_bash()
+
+
 # --------------------------------------------------------------------------
 # Existence and basic shell hygiene
 # --------------------------------------------------------------------------
@@ -85,8 +122,10 @@ class TestScriptPresence:
 
     @pytest.mark.parametrize("distro", cl.DISTROS)
     def test_script_is_parseable_by_bash(self, distro):
+        if REAL_BASH is None:
+            pytest.skip("no usable POSIX bash available (Windows WSL stub only)")
         result = subprocess.run(
-            ["bash", "-n", str(preinstall_path(distro))],
+            [REAL_BASH, "-n", str(preinstall_path(distro))],
             capture_output=True, text=True,
         )
         assert result.returncode == 0, result.stderr
@@ -300,8 +339,32 @@ class TestWindowsLibchmRobustness:
         )
 
     def test_ps1_targets_a_real_chmlib_artifact(self):
-        """If it downloads chmlib itself, the URL must not be the dead one."""
+        """If it downloads chmlib itself, the URL must not be the dead one.
+
+        Only *code* is inspected: the dead URL is deliberately documented in a
+        comment so the next person does not repeat the investigation.
+        """
         text = (REPO_ROOT / "windows" / "win11" / "3.13" / "preinstall.ps1").read_text(
             encoding="utf-8"
         )
-        assert "jedrea.com/chmlib/chmlib-0.40.zip" not in text
+        code_lines = [
+            line for line in text.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        code = "\n".join(code_lines)
+        assert "jedrea.com/chmlib/chmlib-0.40.zip" not in code, (
+            "the download URL is dead (404); do not use it in live code"
+        )
+
+    def test_ps1_download_url_is_used_in_code(self):
+        """The replacement source must actually be wired into executable code."""
+        text = (REPO_ROOT / "windows" / "win11" / "3.13" / "preinstall.ps1").read_text(
+            encoding="utf-8"
+        )
+        code_lines = [
+            line for line in text.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        assert any("Invoke-WebRequest" in line for line in code_lines), (
+            "expected an actual download call for the source fallback"
+        )
