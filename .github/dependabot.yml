@@ -1,0 +1,53 @@
+version: 2
+
+updates:
+  # Python dependencies. The matrix spans <platform>/<distro>/<python-version>,
+  # so pip ecosystems are configured per target directory.
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 10
+    labels: [dependencies, python]
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      python-dev-tooling:
+        patterns: ["ruff", "mypy", "flake8", "pylint", "pyright", "ty", "pytest*"]
+
+  - package-ecosystem: pip
+    directory: "/unix/archlinux/3.14"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels: [dependencies, python, archlinux]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: pip
+    directory: "/windows/win11/3.13"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels: [dependencies, python, windows]
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Keep the workflow actions themselves current.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels: [dependencies, github-actions]
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      actions:
+        patterns: ["*"]

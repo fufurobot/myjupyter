@@ -137,10 +137,15 @@ IGNORED_TOP_LEVEL: frozenset[str] = frozenset(
         ".github",
         ".devcontainer",
         ".venv",
+        ".ci",
         "scripts",
         "tests",
         "docs",
         "site",
+        "_site",
+        "dist",
+        "build",
+        "node_modules",
     }
 )
 

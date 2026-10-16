@@ -1,0 +1,160 @@
+name: daily
+
+# Implements the todo.md requirement:
+#   "use a github ci matrix to submit pull requests for this project daily
+#    (if no remote update, do not submit pull request)"
+#
+# The workflow runs the matrix, then scripts/daily_pr.py decides whether a PR
+# is warranted. When nothing changed it exits 0 and touches nothing, so no
+# empty PRs are ever opened.
+#
+# Requires a token able to push the daily branch and open PRs. By default the
+# workflow GITHUB_TOKEN is used; set the DAILY_PR_TOKEN secret to a fine-grained
+# PAT if branch protection blocks the default token.
+
+on:
+  schedule:
+    # Daily at 04:41 UTC (off the hour, and off the weekly deep run).
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Open a PR even when nothing changed (workflow smoke test)"
+        type: boolean
+        default: false
+      base:
+        description: "Base branch for the generated PR"
+        type: string
+        default: dev
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: daily
+  cancel-in-progress: false
+
+jobs:
+  # 1. Run the matrix first: never propose a change that does not build.
+  verify:
+    name: verify ${{ matrix.distro }} py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: unix,    distro: ubuntu,    python: "3.14", os: ubuntu-24.04, pm: apt }
+          - { platform: unix,    distro: debian,    python: "3.14", os: ubuntu-24.04, pm: apt }
+          - { platform: unix,    distro: archlinux, python: "3.14", os: ubuntu-24.04, pm: pacman }
+          - { platform: unix,    distro: macos,     python: "3.14", os: macos-14,     pm: brew }
+          - { platform: windows, distro: win11,     python: "3.13", os: windows-2022, pm: choco }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show target
+        shell: bash
+        run: |
+          echo "target=${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}"
+
+      - name: Preinstall (unix)
+        if: matrix.platform == 'unix'
+        shell: bash
+        working-directory: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}
+        run: |
+          chmod +x preinstall.sh
+          ./preinstall.sh || echo "::warning::preinstall issues tolerated in daily verify"
+
+      - name: Preinstall (windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        working-directory: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}
+        run: |
+          .\preinstall.ps1 -Force
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Validate layout + tests
+        shell: bash
+        run: |
+          python3 scripts/check_layout.py
+          uv run --python 3.12 --with pytest pytest tests/ -q
+
+  # 2. Decide whether a PR is warranted, and open it only if so.
+  propose:
+    name: propose PR if changed
+    needs: verify
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.DAILY_PR_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Compute change set
+        id: changes
+        run: |
+          python3 scripts/daily_pr.py \
+            --repo "${{ github.repository }}" \
+            --base "${{ inputs.base || 'dev' }}" \
+            ${{ inputs.force && '--force' || '' }} \
+            --dry-run | tee daily-plan.txt
+
+      - name: Open pull request only when the remote actually changed
+        env:
+          GITHUB_TOKEN: ${{ secrets.DAILY_PR_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/daily_pr.py \
+            --repo "${{ github.repository }}" \
+            --base "${{ inputs.base || 'dev' }}" \
+            ${{ inputs.force && '--force' || '' }}
+
+      - name: Summarise
+        if: always()
+        run: |
+          {
+            echo "### Daily dependency matrix"
+            echo ""
+            echo '```'
+            cat daily-plan.txt || echo "no plan produced"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # 3. Reply to the tracking issue with the outcome (success or failure).
+  report:
+    name: report to issue
+    needs: [verify, propose]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Comment on the tracking issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.DAILY_PR_TOKEN || secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RESULT: ${{ needs.propose.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          sys.path.insert(0, "scripts")
+          from daily_pr import api
+          token = os.environ["GITHUB_TOKEN"]
+          result = os.environ.get("RESULT", "unknown")
+          body = (
+              "### Daily dependency-matrix run\n\n"
+              f"- propose job: **{result}**\n"
+              f"- workflow run: {os.environ.get('RUN_URL')}\n"
+          )
+          status, payload = api(
+              "POST",
+              f"/repos/{os.environ['GITHUB_REPOSITORY']}/issues/1/comments",
+              token, {"body": body},
+          )
+          print("comment status:", status)
+          PY

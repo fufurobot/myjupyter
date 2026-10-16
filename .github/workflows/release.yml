@@ -1,0 +1,126 @@
+name: release
+
+# Branch model: pushing a tag publishes artifacts.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # Full verification before anything is published.
+  verify:
+    name: verify ${{ matrix.distro }} py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: unix,    distro: ubuntu,    python: "3.13", os: ubuntu-24.04, pm: apt }
+          - { platform: unix,    distro: ubuntu,    python: "3.14", os: ubuntu-24.04, pm: apt }
+          - { platform: unix,    distro: debian,    python: "3.14", os: ubuntu-24.04, pm: apt }
+          - { platform: unix,    distro: archlinux, python: "3.14", os: ubuntu-24.04, pm: pacman }
+          - { platform: unix,    distro: macos,     python: "3.14", os: macos-14,     pm: brew }
+          - { platform: windows, distro: win11,     python: "3.13", os: windows-2022, pm: choco }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preinstall (unix)
+        if: matrix.platform == 'unix'
+        shell: bash
+        working-directory: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}
+        run: |
+          chmod +x preinstall.sh
+          ./preinstall.sh
+
+      - name: Preinstall (windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        working-directory: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}
+        run: .\preinstall.ps1 -Force
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Validate layout and run tests
+        shell: bash
+        run: |
+          python3 scripts/check_layout.py
+          uv run --python 3.12 --with pytest pytest tests/ -q
+
+  bundle:
+    name: build artifact bundle
+    needs: verify
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble the release bundle
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          python3 scripts/check_layout.py --matrix full > dist/matrix-full.json
+          python3 scripts/check_layout.py --matrix fast > dist/matrix-fast.json
+          python3 - <<'PY'
+          import pathlib, shutil, subprocess, tarfile
+
+          root = pathlib.Path(".").resolve()
+          out = root / "dist"
+          out.mkdir(exist_ok=True)
+
+          # Every <platform>/<distro>/<python-version> target, minus regenerable noise.
+          skip = {".venv", "venv", "__pycache__", ".pytest_cache", "build", "dist",
+                  ".uv-cache", "node_modules"}
+          staging = root / "dist" / "myjupyter-targets"
+          if staging.exists():
+              shutil.rmtree(staging)
+          staging.mkdir(parents=True)
+
+          count = 0
+          for platform in ("windows", "unix"):
+              pdir = root / platform
+              if not pdir.is_dir():
+                  continue
+              for distro in sorted(p for p in pdir.iterdir() if p.is_dir()):
+                  for pyver in sorted(p for p in distro.iterdir() if p.is_dir()):
+                      dest = staging / platform / distro.name / pyver.name
+                      dest.mkdir(parents=True, exist_ok=True)
+                      for item in pyver.rglob("*"):
+                          if any(part in skip for part in item.relative_to(pyver).parts):
+                              continue
+                          if item.is_dir():
+                              continue
+                          target = dest / item.relative_to(pyver)
+                          target.parent.mkdir(parents=True, exist_ok=True)
+                          shutil.copy2(item, target)
+                      count += 1
+
+          archive = out / "myjupyter-targets.tar.gz"
+          with tarfile.open(archive, "w:gz") as tf:
+              tf.add(staging, arcname="myjupyter-targets")
+          print(f"bundled {count} target(s) -> {archive}")
+
+          # Also publish a plain requirements snapshot for convenience.
+          req = root / "requirements.txt"
+          if req.is_file():
+              shutil.copy2(req, out / "requirements.txt")
+          PY
+          ls -la dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: myjupyter-targets
+          path: dist/*
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          draft: false
+          fail_on_unmatched_files: false

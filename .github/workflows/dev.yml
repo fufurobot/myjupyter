@@ -1,0 +1,125 @@
+name: dev
+
+# Fast tests only. The branch model is:
+#   dev  -> fast tests (this workflow)
+#   main -> full tests (full.yml)
+#   tags -> release artifacts (release.yml)
+# CI is allowed to be red on dev while a sprint is in progress.
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dev-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Guard rails: the canonical layout and the unit suite are cheap and always
+  # run, so a broken tree fails fast before the distro matrix spins up.
+  layout:
+    name: layout + unit tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Validate canonical layout
+        run: python3 scripts/check_layout.py
+
+      - name: Run unit tests
+        run: uv run --python 3.13 --with pytest pytest tests/ -q
+
+      - name: Generate fast matrix (sanity)
+        run: python3 scripts/check_layout.py --matrix fast >/dev/null
+
+  # The fast matrix: one Python per distro, using each distro's own package
+  # manager. This is what proves the <distro> layer is actually necessary.
+  fast:
+    name: ${{ matrix.distro }} py${{ matrix.python }}
+    needs: layout
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: unix,    distro: ubuntu,    python: "3.14", os: ubuntu-24.04,  pm: apt }
+          - { platform: unix,    distro: debian,    python: "3.14", os: ubuntu-24.04,  pm: apt }
+          - { platform: unix,    distro: archlinux, python: "3.14", os: ubuntu-24.04,  pm: pacman }
+          - { platform: unix,    distro: macos,     python: "3.14", os: macos-14,      pm: brew }
+          - { platform: unix,    distro: guix,      python: "3.14", os: ubuntu-24.04,  pm: guix }
+          - { platform: unix,    distro: nixos,     python: "3.14", os: ubuntu-24.04,  pm: nix }
+          - { platform: windows, distro: winxp,     python: "3.10", os: windows-2022,  pm: choco }
+          - { platform: windows, distro: win7,      python: "3.10", os: windows-2022,  pm: choco }
+          - { platform: windows, distro: win10,     python: "3.13", os: windows-2022,  pm: choco }
+          - { platform: windows, distro: win11,     python: "3.13", os: windows-2022,  pm: choco }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show matrix target
+        shell: bash
+        run: |
+          echo "platform=${{ matrix.platform }} distro=${{ matrix.distro }}"
+          echo "python=${{ matrix.python }} pm=${{ matrix.pm }}"
+          ls -la "${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}"
+
+      - name: Configure git ssh (avoid broken system ssh_config)
+        shell: bash
+        run: git config --global core.sshCommand "ssh -F /dev/null"
+
+      - name: Preinstall (unix, bash)
+        if: matrix.platform == 'unix'
+        shell: bash
+        working-directory: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}
+        run: |
+          chmod +x preinstall.sh
+          ./preinstall.sh || echo "::warning::preinstall reported issues (tolerated on dev)"
+
+      - name: Preinstall (windows, powershell)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        working-directory: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}
+        run: |
+          .\preinstall.ps1 -Force
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Verify Python is available
+        shell: bash
+        run: uv python install ${{ matrix.python }} && uv python list
+
+      - name: Validate this target directory
+        shell: bash
+        run: python3 scripts/check_layout.py --quiet
+
+  # Cross-platform unit tests: the scripts must behave on both shells.
+  unit-cross:
+    name: unit tests (${{ matrix.os }})
+    needs: layout
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Run tests
+        shell: bash
+        run: uv run --python 3.12 --with pytest pytest tests/ -q

@@ -222,3 +222,6 @@ __marimo__/
 
 # uv
 .uv-cache/
+
+# generated site
+_site/
