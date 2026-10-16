@@ -121,10 +121,19 @@ function Install-LibchmFromSource {
             $obj = Join-Path $work ([IO.Path]::GetFileNameWithoutExtension($c) + '.obj')
             Write-Log "compiling $c"
             # /c compile only, /O2 optimise, /DCHM_STATIC for the static build.
-            & cl.exe /nologo /c /O2 /W3 /DCHM_STATIC /D_CRT_SECURE_NO_WARNINGS `
-                "/I$srcDir" "/Fo$obj" $srcFile
+            # Capture compiler output: without it a failure is a bare exit
+            # code and cannot be diagnosed from CI (learned the hard way).
+            # /DWIN32 IS REQUIRED. chm_lib.c and chm_lib.h test `#ifdef WIN32`,
+            # but MSVC predefines only `_WIN32`. Without this define the code
+            # takes the Linux branch and does `#include <unistd.h>`, which does
+            # not exist on MSVC, so cl.exe exits 2.
+            $compileOut = & cl.exe /nologo /c /O2 /W3 `
+                /DWIN32 /D_WINDOWS /DCHM_STATIC /D_CRT_SECURE_NO_WARNINGS /D_CRT_NONSTDC_NO_DEPRECATE `
+                "/I$srcDir" "/Fo$obj" $srcFile *>&1
+            $compileOut | Out-File -FilePath (Join-Path $work 'cl.log') -Append -Encoding utf8
             if ($LASTEXITCODE -ne 0) {
-                Write-Warn "cl.exe failed on $c (exit $LASTEXITCODE)"
+                Write-Warn "cl.exe failed on $c (exit $LASTEXITCODE); output:"
+                $compileOut | Select-Object -Last 15 | ForEach-Object { Write-Warn "  $_" }
                 return $false
             }
             $objs += $obj
@@ -132,9 +141,11 @@ function Install-LibchmFromSource {
 
         $lib = Join-Path $libDir 'chm.lib'
         Write-Log 'archiving chm.lib'
-        & lib.exe /nologo "/OUT:$lib" @objs
+        $libOut = & lib.exe /nologo "/OUT:$lib" @objs *>&1
+        $libOut | Out-File -FilePath (Join-Path $work 'cl.log') -Append -Encoding utf8
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path $lib)) {
-            Write-Warn "lib.exe failed to produce chm.lib (exit $LASTEXITCODE)"
+            Write-Warn "lib.exe failed to produce chm.lib (exit $LASTEXITCODE); output:"
+            $libOut | Select-Object -Last 15 | ForEach-Object { Write-Warn "  $_" }
             return $false
         }
 

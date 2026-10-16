@@ -461,3 +461,24 @@ class TestWindowsDiagnostics:
         assert "clang" in text.lower() or "gcc" in text.lower(), (
             "clang/gcc should be accepted when MSVC is unavailable"
         )
+
+    def test_defines_win32_for_msvc(self):
+        """chm_lib.c tests `#ifdef WIN32`, but MSVC predefines only `_WIN32`.
+
+        Without an explicit /DWIN32 the upstream code takes the Linux branch
+        and does `#include <unistd.h>`, which does not exist on MSVC, so
+        cl.exe exits 2. Verified by preprocessing the real sources:
+
+            gcc -E            chm_lib.c  -> includes unistd.h
+            gcc -E -DWIN32    chm_lib.c  -> includes windows.h
+        """
+        text = self._ps1()
+        assert "/DWIN32" in text, (
+            "cl.exe must be given /DWIN32 or chmlib compiles the POSIX branch"
+        )
+
+    def test_documents_why_win32_is_needed(self):
+        text = self._ps1()
+        assert "unistd.h" in text, (
+            "the reason /DWIN32 is required should be documented"
+        )
