@@ -368,3 +368,46 @@ class TestWindowsLibchmRobustness:
         assert any("Invoke-WebRequest" in line for line in code_lines), (
             "expected an actual download call for the source fallback"
         )
+
+
+class TestWindowsDiagnostics:
+    """A silent failure is worse than a loud one.
+
+    In CI run 38858291896 the source build reported only "produced no
+    chm_lib.h" because the CMake output was piped to ``Out-Null``, so the
+    real error was thrown away and the cause was unrecoverable from the log.
+    """
+
+    def _ps1(self) -> str:
+        return (REPO_ROOT / "windows" / "win11" / "3.13" / "preinstall.ps1").read_text(
+            encoding="utf-8"
+        )
+
+    def test_does_not_swallow_cmake_output(self):
+        """The cmake *build* output must be kept; installing cmake may be quiet."""
+        text = self._ps1()
+        bad = [
+            line.strip() for line in text.splitlines()
+            if ("cmake -S" in line or "cmake --build" in line) and "Out-Null" in line
+        ]
+        assert not bad, f"CMake build output is discarded on: {bad}"
+
+    def test_reports_cmake_exit_code(self):
+        text = self._ps1()
+        assert "$LASTEXITCODE" in text, (
+            "the build must check cmake's exit code explicitly"
+        )
+
+    def test_surfaces_the_tail_of_the_failure_log(self):
+        text = self._ps1()
+        assert "Select-Object -Last" in text, (
+            "on failure the last log lines should be echoed to the CI output"
+        )
+
+    def test_writes_a_full_log_file(self):
+        text = self._ps1()
+        assert "cmake.log" in text, "a full build log should be kept for debugging"
+
+    def test_notes_that_cmake_may_be_missing(self):
+        text = self._ps1()
+        assert "cmake not available" in text.lower()

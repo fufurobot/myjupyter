@@ -70,27 +70,66 @@ function Install-LibchmFromSource {
 
         if (-not (Test-Command 'cmake')) {
             Write-Warn 'cmake not available; cannot build chmlib from source'
+            Write-Warn 'install CMake (winget install Kitware.CMake) and re-run'
             return $false
         }
         $prefix = Join-Path $work 'install'
-        cmake -S $src.FullName -B (Join-Path $work 'build') `
+        $build  = Join-Path $work 'build'
+
+        # Keep the tool output: piping to Out-Null hides the real error and
+        # makes a failed build undiagnosable. Capture, then report on failure.
+        $log = Join-Path $work 'cmake.log'
+        Write-Log "configuring chmlib -> $build"
+        $configure = & cmake -S $src.FullName -B $build `
               -DCMAKE_BUILD_TYPE=Release `
               -DCMAKE_INSTALL_PREFIX="$prefix" `
-              -DCHM_STATIC=ON 2>&1 | Out-Null
-        cmake --build (Join-Path $work 'build') --config Release --target install 2>&1 | Out-Null
-
-        $header = Join-Path $prefix 'include\chm_lib.h'
-        if (Test-Path $header) {
-            $env:CHMLIB_PREFIX = $prefix
-            $env:INCLUDE       = "$prefix\include;$env:INCLUDE"
-            $env:LIB           = "$prefix\lib;$env:LIB"
-            $env:CFLAGS        = "$env:CFLAGS /I$prefix\include"
-            $env:LDFLAGS       = "$env:LDFLAGS /LIBPATH:$prefix\lib"
-            Write-Log "built chmlib from source -> $prefix"
-            return $true
+              -DCHM_STATIC=ON *>&1
+        $configure | Out-File -FilePath $log -Encoding utf8
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "cmake configure failed (exit $LASTEXITCODE); last lines:"
+            $configure | Select-Object -Last 12 | ForEach-Object { Write-Warn "  $_" }
+            return $false
         }
-        Write-Warn 'source build produced no chm_lib.h'
-        return $false
+
+        Write-Log 'building and installing chmlib'
+        $buildOut = & cmake --build $build --config Release --target install *>&1
+        $buildOut | Out-File -FilePath $log -Append -Encoding utf8
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "cmake build failed (exit $LASTEXITCODE); last lines:"
+            $buildOut | Select-Object -Last 12 | ForEach-Object { Write-Warn "  $_" }
+            return $false
+        }
+
+        # CMake may place the artifacts in a config subdirectory on Windows.
+        $header = Join-Path $prefix 'include\chm_lib.h'
+        if (-not (Test-Path $header)) {
+            $found = Get-ChildItem -Path $work -Recurse -Filter 'chm_lib.h' -ErrorAction SilentlyContinue |
+                     Select-Object -First 1
+            if ($found) {
+                $inc = Split-Path $found.FullName -Parent
+                $lib = Get-ChildItem -Path $work -Recurse -Filter 'chm.lib' -ErrorAction SilentlyContinue |
+                       Select-Object -First 1
+                $env:CHMLIB_PREFIX = Split-Path $inc -Parent
+                $env:INCLUDE       = "$inc;$env:INCLUDE"
+                $env:CFLAGS        = "$env:CFLAGS /I$inc"
+                if ($lib) {
+                    $env:LIB     = "$(Split-Path $lib.FullName -Parent);$env:LIB"
+                    $env:LDFLAGS = "$env:LDFLAGS /LIBPATH:$(Split-Path $lib.FullName -Parent)"
+                }
+                Write-Log "built chmlib from source -> $inc"
+                return $true
+            }
+            Write-Warn "source build produced no chm_lib.h; full log: $log"
+            return $false
+        }
+
+        $env:CHMLIB_PREFIX = $prefix
+        $env:INCLUDE       = "$prefix\include;$env:INCLUDE"
+        $env:LIB           = "$prefix\lib;$env:LIB"
+        $env:CFLAGS        = "$env:CFLAGS /I$prefix\include"
+        $env:LDFLAGS       = "$env:LDFLAGS /LIBPATH:$prefix\lib"
+        Write-Log "built chmlib from source -> $prefix"
+        return $true
     } catch {
         Write-Warn "chmlib source build failed: $_"
         return $false
@@ -150,6 +189,23 @@ if (-not (Test-Command 'uv')) {
         Write-Err "uv install failed: $_"
         exit 1
     }
+}
+
+# --- 1b. CMake (needed to build chmlib from source when no package provides it)
+if (-not (Test-Command 'cmake')) {
+    Write-Log 'cmake not found; attempting to install it for the chmlib source build'
+    if (Test-Command 'winget') {
+        try {
+            winget install --id Kitware.CMake --silent --accept-package-agreements --accept-source-agreements | Out-Null
+        } catch { Write-Warn "winget could not install CMake: $_" }
+    } elseif (Test-Command 'choco') {
+        try { choco install -y cmake --no-progress | Out-Null } catch { Write-Warn "choco could not install CMake: $_" }
+    } else {
+        Write-Warn 'no winget/choco to install CMake; the chmlib source fallback will be skipped'
+    }
+    # Refresh PATH so a just-installed cmake becomes visible.
+    $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' +
+                [System.Environment]::GetEnvironmentVariable('Path','User')
 }
 
 # --- 2. Native chmlib (the pychm build fix) --------------------------------
