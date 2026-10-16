@@ -78,6 +78,42 @@ function Install-LibchmFromSource {
         New-Item -ItemType Directory -Force -Path $inc, $libDir | Out-Null
         Copy-Item $hdr.FullName (Join-Path $inc 'chm_lib.h') -Force
 
+        # A bare PowerShell session has no MSVC on PATH: cl.exe/lib.exe live
+        # behind vcvarsall.bat. Locate Visual Studio and import that
+        # environment before compiling.
+        if (-not (Test-Command 'cl.exe')) {
+            $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+            if (Test-Path $vswhere) {
+                $vsPath = & $vswhere -latest -products * `
+                          -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+                          -property installationPath 2>$null
+                if ($vsPath) {
+                    $vcvars = Join-Path $vsPath 'VC\Auxiliary\Build\vcvars64.bat'
+                    if (Test-Path $vcvars) {
+                        Write-Log "importing MSVC environment from $vcvars"
+                        # Run cmd.exe once and capture the resulting env vars.
+                        $envDump = & cmd.exe /c "`"$vcvars`" >nul 2>&1 && set"
+                        foreach ($line in $envDump) {
+                            if ($line -match '^([^=]+)=(.*)$') {
+                                Set-Item -Path ("env:" + $matches[1]) -Value $matches[2] -ErrorAction SilentlyContinue
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (-not (Test-Command 'cl.exe')) {
+            $fallbacks = @('clang.exe', 'gcc.exe')
+            $cc = $fallbacks | Where-Object { Test-Command $_ } | Select-Object -First 1
+            if (-not $cc) {
+                Write-Warn 'no C compiler found (cl.exe/clang/gcc); cannot build chmlib'
+                Write-Warn 'install "Visual Studio Build Tools" with the C++ workload, then re-run'
+                return $false
+            }
+            Write-Log "cl.exe unavailable; using $cc instead"
+        }
+
         $objs = @()
         foreach ($c in @('chm_lib.c', 'lzx.c')) {
             $srcFile = Join-Path $srcDir $c

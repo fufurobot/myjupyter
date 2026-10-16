@@ -433,3 +433,31 @@ class TestWindowsDiagnostics:
         assert "INCLUDE" in text and "LIB" in text, (
             "pip needs INCLUDE/LIB pointing at chmlib to compile pychm"
         )
+
+    def test_imports_the_msvc_environment_before_compiling(self):
+        """A bare PowerShell session has no cl.exe on PATH.
+
+        CI run 38859143235 proved this: the sources downloaded correctly and
+        then died with "The term 'cl.exe' is not recognized". cl.exe/lib.exe
+        live behind vcvars64.bat, so the script must import that environment
+        (via vswhere) before compiling.
+        """
+        text = self._ps1()
+        assert "vswhere" in text, (
+            "must locate Visual Studio with vswhere to find vcvarsall"
+        )
+        assert "vcvars64.bat" in text, (
+            "must import the MSVC environment from vcvars64.bat"
+        )
+
+    def test_reports_a_missing_compiler_clearly(self):
+        text = self._ps1()
+        assert "no C compiler found" in text, (
+            "a missing compiler must be reported with remediation"
+        )
+
+    def test_offers_a_non_msvc_compiler_fallback(self):
+        text = self._ps1()
+        assert "clang" in text.lower() or "gcc" in text.lower(), (
+            "clang/gcc should be accepted when MSVC is unavailable"
+        )
