@@ -374,8 +374,9 @@ class TestWindowsDiagnostics:
     """A silent failure is worse than a loud one.
 
     In CI run 38858291896 the source build reported only "produced no
-    chm_lib.h" because the CMake output was piped to ``Out-Null``, so the
-    real error was thrown away and the cause was unrecoverable from the log.
+    chm_lib.h". After making the output visible, CI run 38858735096 revealed
+    the real cause: jedwing/CHMLib has no CMakeLists.txt at all (it is
+    autotools), so the whole CMake strategy was wrong.
     """
 
     def _ps1(self) -> str:
@@ -383,31 +384,52 @@ class TestWindowsDiagnostics:
             encoding="utf-8"
         )
 
-    def test_does_not_swallow_cmake_output(self):
-        """The cmake *build* output must be kept; installing cmake may be quiet."""
+    def test_checks_compiler_exit_codes(self):
+        text = self._ps1()
+        assert "$LASTEXITCODE" in text, (
+            "the build must check the compiler's exit code explicitly"
+        )
+
+    def test_surfaces_the_failure_reason(self):
+        text = self._ps1()
+        assert "Write-Warn" in text
+        # Every failure path must explain itself.
+        assert "failed" in text.lower()
+
+    def test_does_not_use_cmake_for_chmlib(self):
+        """CHMLib is autotools-only; invoking CMake on it cannot work."""
+        text = self._ps1()
+        body = text.split("function Install-LibchmFromSource")[1]
+        body = body.split("function Install-Libchm(")[0]
+        assert "cmake -S" not in body and "cmake --build" not in body, (
+            "jedwing/CHMLib has no CMakeLists.txt; do not drive it with CMake"
+        )
+
+    def test_compiles_the_real_chmlib_sources(self):
+        text = self._ps1()
+        assert "chm_lib.c" in text
+        assert "lzx.c" in text, "chmlib needs lzx.c for LZX decompression"
+
+    def test_documents_why_cmake_is_unusable(self):
+        text = self._ps1()
+        assert "CMakeLists.txt" in text or "autotools" in text, (
+            "the reason CMake is avoided should be recorded"
+        )
+
+    def test_reports_the_known_broken_vcpkg_port(self):
+        text = self._ps1()
+        assert "jedrea" in text or "404" in text
+
+    def test_does_not_swallow_the_compiler_output(self):
         text = self._ps1()
         bad = [
             line.strip() for line in text.splitlines()
-            if ("cmake -S" in line or "cmake --build" in line) and "Out-Null" in line
+            if ("cl.exe" in line or "lib.exe" in line) and "Out-Null" in line
         ]
-        assert not bad, f"CMake build output is discarded on: {bad}"
+        assert not bad, f"compiler output is discarded on: {bad}"
 
-    def test_reports_cmake_exit_code(self):
+    def test_exports_paths_pip_needs(self):
         text = self._ps1()
-        assert "$LASTEXITCODE" in text, (
-            "the build must check cmake's exit code explicitly"
+        assert "INCLUDE" in text and "LIB" in text, (
+            "pip needs INCLUDE/LIB pointing at chmlib to compile pychm"
         )
-
-    def test_surfaces_the_tail_of_the_failure_log(self):
-        text = self._ps1()
-        assert "Select-Object -Last" in text, (
-            "on failure the last log lines should be echoed to the CI output"
-        )
-
-    def test_writes_a_full_log_file(self):
-        text = self._ps1()
-        assert "cmake.log" in text, "a full build log should be kept for debugging"
-
-    def test_notes_that_cmake_may_be_missing(self):
-        text = self._ps1()
-        assert "cmake not available" in text.lower()

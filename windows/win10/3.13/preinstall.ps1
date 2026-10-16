@@ -39,24 +39,24 @@ function Test-Libchm {
 }
 
 function Install-LibchmFromSource {
-    # Fallback that does not depend on any package manager's port being healthy.
+    # Build chmlib directly from source with the system C compiler.
     #
-    # NOTE: the vcpkg `chmlib` port is CURRENTLY BROKEN upstream. Its
-    # portfile.cmake downloads http://www.jedrea.com/chmlib/chmlib-0.40.zip,
-    # which now returns 404, so `vcpkg install chmlib` can never succeed:
+    # WHY NOT CMAKE:
+    #   The canonical repository (jedwing/CHMLib) has NO CMakeLists.txt - it
+    #   uses autotools (configure.in / Makefile.am), which is not viable on a
+    #   Windows runner. Its `src/` directory is nevertheless self-contained:
+    #   chm_lib.c, chm_lib.h, lzx.c, lzx.h. Compiling those four files with
+    #   cl.exe (or cc) is all that chmlib needs.
     #
-    #     error: curl operation failed with response code 404.
-    #     CMake Error at scripts/cmake/vcpkg_download_distfile.cmake:134
-    #
-    # Build from the maintained GitHub mirror instead. chmlib only supports
-    # static linkage on Windows, hence CHM_STATIC.
+    # WHY NOT THE VCPKG PORT:
+    #   ports/chmlib/portfile.cmake downloads
+    #   http://www.jedrea.com/chmlib/chmlib-0.40.zip, which returns 404, so
+    #   `vcpkg install chmlib` can never succeed.
     $work = Join-Path $env:TEMP ('chmlib-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Force -Path $work | Out-Null
     try {
         $zip = Join-Path $work 'chmlib.zip'
-        # `codeload` serves a stable archive for a tagged ref, which is much
-        # more durable than a personal homepage.
-        $url = 'https://codeload.github.com/jedwing/chmlib/zip/refs/heads/master'
+        $url = 'https://codeload.github.com/jedwing/CHMLib/zip/refs/heads/master'
         Write-Log "downloading chmlib sources from $url"
         try {
             Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
@@ -65,69 +65,48 @@ function Install-LibchmFromSource {
             return $false
         }
         Expand-Archive -Path $zip -DestinationPath $work -Force
-        $src = Get-ChildItem -Path $work -Directory | Select-Object -First 1
-        if (-not $src) { Write-Warn 'no source directory after extract'; return $false }
 
-        if (-not (Test-Command 'cmake')) {
-            Write-Warn 'cmake not available; cannot build chmlib from source'
-            Write-Warn 'install CMake (winget install Kitware.CMake) and re-run'
-            return $false
-        }
+        # Locate the sources wherever the archive rooted them.
+        $hdr = Get-ChildItem -Path $work -Recurse -Filter 'chm_lib.h' -ErrorAction SilentlyContinue |
+               Select-Object -First 1
+        if (-not $hdr) { Write-Warn "no chm_lib.h in the downloaded archive"; return $false }
+        $srcDir = Split-Path $hdr.FullName -Parent
+
         $prefix = Join-Path $work 'install'
-        $build  = Join-Path $work 'build'
+        $inc    = Join-Path $prefix 'include'
+        $libDir = Join-Path $prefix 'lib'
+        New-Item -ItemType Directory -Force -Path $inc, $libDir | Out-Null
+        Copy-Item $hdr.FullName (Join-Path $inc 'chm_lib.h') -Force
 
-        # Keep the tool output: piping to Out-Null hides the real error and
-        # makes a failed build undiagnosable. Capture, then report on failure.
-        $log = Join-Path $work 'cmake.log'
-        Write-Log "configuring chmlib -> $build"
-        $configure = & cmake -S $src.FullName -B $build `
-              -DCMAKE_BUILD_TYPE=Release `
-              -DCMAKE_INSTALL_PREFIX="$prefix" `
-              -DCHM_STATIC=ON *>&1
-        $configure | Out-File -FilePath $log -Encoding utf8
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warn "cmake configure failed (exit $LASTEXITCODE); last lines:"
-            $configure | Select-Object -Last 12 | ForEach-Object { Write-Warn "  $_" }
-            return $false
-        }
-
-        Write-Log 'building and installing chmlib'
-        $buildOut = & cmake --build $build --config Release --target install *>&1
-        $buildOut | Out-File -FilePath $log -Append -Encoding utf8
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warn "cmake build failed (exit $LASTEXITCODE); last lines:"
-            $buildOut | Select-Object -Last 12 | ForEach-Object { Write-Warn "  $_" }
-            return $false
-        }
-
-        # CMake may place the artifacts in a config subdirectory on Windows.
-        $header = Join-Path $prefix 'include\chm_lib.h'
-        if (-not (Test-Path $header)) {
-            $found = Get-ChildItem -Path $work -Recurse -Filter 'chm_lib.h' -ErrorAction SilentlyContinue |
-                     Select-Object -First 1
-            if ($found) {
-                $inc = Split-Path $found.FullName -Parent
-                $lib = Get-ChildItem -Path $work -Recurse -Filter 'chm.lib' -ErrorAction SilentlyContinue |
-                       Select-Object -First 1
-                $env:CHMLIB_PREFIX = Split-Path $inc -Parent
-                $env:INCLUDE       = "$inc;$env:INCLUDE"
-                $env:CFLAGS        = "$env:CFLAGS /I$inc"
-                if ($lib) {
-                    $env:LIB     = "$(Split-Path $lib.FullName -Parent);$env:LIB"
-                    $env:LDFLAGS = "$env:LDFLAGS /LIBPATH:$(Split-Path $lib.FullName -Parent)"
-                }
-                Write-Log "built chmlib from source -> $inc"
-                return $true
+        $objs = @()
+        foreach ($c in @('chm_lib.c', 'lzx.c')) {
+            $srcFile = Join-Path $srcDir $c
+            if (-not (Test-Path $srcFile)) { Write-Warn "missing source file $c"; return $false }
+            $obj = Join-Path $work ([IO.Path]::GetFileNameWithoutExtension($c) + '.obj')
+            Write-Log "compiling $c"
+            # /c compile only, /O2 optimise, /DCHM_STATIC for the static build.
+            & cl.exe /nologo /c /O2 /W3 /DCHM_STATIC /D_CRT_SECURE_NO_WARNINGS `
+                "/I$srcDir" "/Fo$obj" $srcFile
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warn "cl.exe failed on $c (exit $LASTEXITCODE)"
+                return $false
             }
-            Write-Warn "source build produced no chm_lib.h; full log: $log"
+            $objs += $obj
+        }
+
+        $lib = Join-Path $libDir 'chm.lib'
+        Write-Log 'archiving chm.lib'
+        & lib.exe /nologo "/OUT:$lib" @objs
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $lib)) {
+            Write-Warn "lib.exe failed to produce chm.lib (exit $LASTEXITCODE)"
             return $false
         }
 
         $env:CHMLIB_PREFIX = $prefix
-        $env:INCLUDE       = "$prefix\include;$env:INCLUDE"
-        $env:LIB           = "$prefix\lib;$env:LIB"
-        $env:CFLAGS        = "$env:CFLAGS /I$prefix\include"
-        $env:LDFLAGS       = "$env:LDFLAGS /LIBPATH:$prefix\lib"
+        $env:INCLUDE       = "$inc;$env:INCLUDE"
+        $env:LIB           = "$libDir;$env:LIB"
+        $env:CFLAGS        = "$env:CFLAGS /I$inc"
+        $env:LDFLAGS       = "$env:LDFLAGS /LIBPATH:$libDir"
         Write-Log "built chmlib from source -> $prefix"
         return $true
     } catch {
