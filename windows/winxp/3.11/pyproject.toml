@@ -3,11 +3,56 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
+dependencies = [
+    "ruff",
+    "mypy",
+    "flake8",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "pytest-mock",
+    "pytest-xdist",
+    "pylint",
+    "pyright",
+    "typer",
+    "rich",
+    "tqdm",
+    "requests",
+    "dnspython",
+    "graphql-core",
+    "fastapi",
+    "uvicorn",
+    "openai",
+    "pandas",
+    "pyarrow",
+    "openpyxl",
+    "lxml",
+    "beautifulsoup4",
+    "html5lib",
+    "python-docx",
+    "pdfplumber",
+    "regex",
+    "pypinyin",
+    "nltk",
+    "tree-sitter-language-pack",
+    "sympy",
+    "networkx",
+    "pillow",
+    "plotly",
+    "matplotlib",
+    "segno",
+    "playwright",
+    "asyncssh",
+    "asyncvnc",
+    "jupyter",
+    "jupyterlab",
+    "pynput",
+]
 name = "winxp-py311"
 version = "0.1.0"
 description = "myjupyter toolchain for windows/winxp on Python 3.11"
 readme = "README.md"
-requires-python = ">=3.11,<3.12"
+requires-python = ">=3.11"
 authors = [{ name = "fufu", email = "fufurobot@outlook.com" }]
 license = { text = "MIT" }
 

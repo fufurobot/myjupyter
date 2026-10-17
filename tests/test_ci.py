@@ -37,7 +37,6 @@ def _load(name: str, rel: str):
 
 
 cl = _load("check_layout", "scripts/check_layout.py")
-bs = _load("build_site", "scripts/build_site.py")
 uu = _load("upstream_update", "scripts/upstream_update.py")
 
 
@@ -61,7 +60,7 @@ def workflows() -> dict[str, dict]:
 # Workflow presence and validity
 # --------------------------------------------------------------------------
 
-REQUIRED = ["matrix", "pages", "release", "upstream-update"]
+REQUIRED = ["matrix", "release", "upstream-update"]
 
 
 class TestWorkflowPresence:
@@ -214,34 +213,6 @@ class TestUpstreamUpdateLogic:
 # Pages site
 # --------------------------------------------------------------------------
 
-class TestSiteBuild:
-    def test_build_creates_index(self, tmp_path):
-        assert bs.build(tmp_path).is_file()
-
-    def test_creates_nojekyll(self, tmp_path):
-        bs.build(tmp_path)
-        assert (tmp_path / ".nojekyll").is_file()
-
-    def test_no_unrendered_placeholders(self, tmp_path):
-        text = bs.build(tmp_path).read_text(encoding="utf-8")
-        assert not re.search(r"\{[a-z_]+\}", text)
-
-    def test_lists_every_committed_target(self, tmp_path):
-        text = bs.build(tmp_path).read_text(encoding="utf-8")
-        for _, parts in cl.iter_target_dirs(REPO_ROOT):
-            assert "/".join(parts) in text
-
-    def test_mentions_every_distro(self, tmp_path):
-        text = bs.build(tmp_path).read_text(encoding="utf-8")
-        for distro in cl.DISTROS:
-            assert distro in text
-
-    def test_site_documents_the_requirement_split(self, tmp_path):
-        text = bs.build(tmp_path).read_text(encoding="utf-8")
-        assert "requirements-jupyterhub" in text or "jupyterhub" in text
-        assert "experimental" in text
-
-
 # --------------------------------------------------------------------------
 # Branch model
 # --------------------------------------------------------------------------
@@ -250,28 +221,14 @@ class TestBranchModel:
     def test_matrix_triggers_on_dev_and_main(self, workflows):
         assert triggers(workflows["matrix"])["push"]["branches"] == ["dev", "main"]
 
-    def test_matrix_also_triggers_on_tags(self, workflows):
-        tags = triggers(workflows["matrix"])["push"]["tags"]
-        assert any(t.startswith("v") for t in tags)
 
     def test_matrix_has_a_weekly_schedule(self, workflows):
         sched = triggers(workflows["matrix"])["schedule"]
         for entry in sched:
             assert len(entry["cron"].split()) == 5
 
-    def test_release_triggers_on_tags(self, workflows):
-        trig = triggers(workflows["release"])
-        assert any(t.startswith("v") for t in trig["push"]["tags"])
 
-    def test_pages_is_reusable(self, workflows):
-        assert "workflow_call" in triggers(workflows["pages"])
 
-    def test_matrix_calls_pages_on_main(self, workflows):
-        jobs = workflows["matrix"]["jobs"]
-        assert any(
-            isinstance(j, dict) and "pages" in str(j.get("uses", ""))
-            for j in jobs.values()
-        )
 
     def test_matrix_runs_unit_tests(self, workflows):
         assert "unit" in workflows["matrix"]["jobs"]

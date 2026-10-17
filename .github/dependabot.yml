@@ -9,6 +9,8 @@ updates:
   # Representative pip targets.
   - package-ecosystem: pip
     directory: "/unix/archlinux/3.14"
+    # Dependabot PRs must land on dev, not main.
+    target-branch: dev
     schedule:
       interval: weekly
       day: monday
@@ -24,6 +26,8 @@ updates:
 
   - package-ecosystem: pip
     directory: "/windows/win11/3.13"
+    # Dependabot PRs must land on dev, not main.
+    target-branch: dev
     schedule:
       interval: weekly
       day: monday
@@ -34,6 +38,8 @@ updates:
 
   - package-ecosystem: pip
     directory: "/unix/debian/3.14"
+    # Dependabot PRs must land on dev, not main.
+    target-branch: dev
     schedule:
       interval: weekly
       day: monday
@@ -45,6 +51,8 @@ updates:
   # Keep the workflow actions themselves current.
   - package-ecosystem: github-actions
     directory: "/"
+    # Dependabot PRs must land on dev, not main.
+    target-branch: dev
     schedule:
       interval: weekly
       day: monday

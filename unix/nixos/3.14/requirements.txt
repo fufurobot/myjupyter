@@ -1,6 +1,15 @@
-# Core toolchain - expected to build on every supported target.
-# Keep this list portable: nothing here may require an OS-specific native
-# library, or the matrix will be red for reasons that are not the point.
+# Toolchain for unix/nixos on Python 3.14.
+#
+# This list is intentionally BROAD. Each distro folder carries what is
+# installable only under that distro; the shared core is repeated below so the
+# file is self-contained.
+#
+# The leaf pyproject.toml ADDS these requirements (uv add -r requirements.txt)
+# and commits uv.lock, so CI's `uv sync --upgrade` turns upstream drift into a
+# pull request against dev.
+#
+# Packages that need native libraries and are not worth fighting live in
+# requirements.experimental.txt instead.
 
 # --- dev tooling -----------------------------------------------------------
 ruff
@@ -57,4 +66,16 @@ segno
 playwright
 asyncssh
 asyncvnc
+
+# --- unix only -------------------------------------------------------------
+# jupyterhub declares `pamela` for sys_platform != "win32", and its
+# PAMAuthenticator has no Windows implementation. Keep it out of Windows.
+jupyterhub
+jupyter
+jupyterlab
+marimo
+streamlit
+
+# --- unix native tooling ---------------------------------------------------
+# CLI/TUI and system-integration helpers that need POSIX subsystems.
 pynput
