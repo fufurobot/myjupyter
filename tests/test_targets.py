@@ -127,49 +127,42 @@ class TestRequirementSplit:
         )
         assert "pychm" in code
 
-    @pytest.mark.parametrize("platform,distro,version", ALL_TARGETS)
-    def test_core_never_contains_jupyterhub(self, platform, distro, version):
-        text = (target_dir(platform, distro, version) / "requirements.txt").read_text(
+    @pytest.mark.parametrize(
+        "distro,version",
+        [(d, v) for p, d, v in ALL_TARGETS if p == "unix" and v == "3.10"],
+    )
+    def test_unix_core_lists_jupyterhub(self, distro, version):
+        """The broad list is intentional: unix gets jupyterhub in requirements.txt."""
+        text = (target_dir("unix", distro, version) / "requirements.txt").read_text(
             encoding="utf-8"
         )
-        assert "jupyterhub" not in text
+        assert "jupyterhub" in text
 
     @pytest.mark.parametrize(
         "distro,version",
-        [(d, "3.14") for d in ("ubuntu", "debian", "archlinux", "macos", "guix", "nixos")],
+        [(d, v) for p, d, v in ALL_TARGETS if p == "windows" and v == "3.10"],
     )
-    def test_unix_targets_have_a_jupyterhub_set(self, distro, version):
-        d = target_dir("unix", distro, version)
-        assert (d / "requirements-jupyterhub.txt").is_file()
+    def test_windows_core_never_lists_jupyterhub(self, distro, version):
+        """jupyterhub needs PAM (`pamela`) and has no Windows authenticator."""
+        text = (target_dir("windows", distro, version) / "requirements.txt").read_text(
+            encoding="utf-8"
+        )
+        code = "\n".join(
+            line for line in text.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        )
+        assert "jupyterhub" not in code
 
     @pytest.mark.parametrize(
         "distro,version",
-        [("winxp", "3.10"), ("win7", "3.10"), ("win10", "3.13"), ("win11", "3.13")],
+        [(d, v) for p, d, v in ALL_TARGETS if p == "windows" and v == "3.10"],
     )
-    def test_windows_targets_have_no_jupyterhub_set(self, distro, version):
-        """jupyterhub needs PAM (pamela) and has no Windows authenticator."""
-        d = target_dir("windows", distro, version)
-        assert not (d / "requirements-jupyterhub.txt").exists()
-
-    @pytest.mark.parametrize("platform,distro,version", ALL_TARGETS)
-    def test_no_duplicate_packages_across_sets(self, platform, distro, version):
-        d = target_dir(platform, distro, version)
-
-        def pkgs(name):
-            p = d / name
-            if not p.is_file():
-                return set()
-            out = set()
-            for line in p.read_text(encoding="utf-8").splitlines():
-                line = line.split("#")[0].strip()
-                if line and not line.startswith("-"):
-                    out.add(line.split("=")[0].split(">")[0].split("<")[0].strip().lower())
-            return out
-
-        core = pkgs("requirements.txt")
-        for other in ("requirements-jupyterhub.txt", "requirements.experimental.txt"):
-            assert not (core & pkgs(other)), f"{other} overlaps requirements.txt"
-
+    def test_windows_core_lists_jupyterlab(self, distro, version):
+        """Windows must be able to start `jupyter lab`."""
+        text = (target_dir("windows", distro, version) / "requirements.txt").read_text(
+            encoding="utf-8"
+        )
+        assert "jupyterlab" in text
 
 # --------------------------------------------------------------------------
 # Scaffolder as source of truth

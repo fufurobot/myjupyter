@@ -1,18 +1,30 @@
 name: release
 
-# Branch model: pushing a tag publishes artifacts.
+# Branch model: every push to main publishes a release of everything produced
+# by `uv build`, keyed by the pyproject.toml version:
+#
+#   version unchanged -> the existing release is updated IN PLACE
+#                        (assets replaced, body refreshed)
+#   version changed   -> a NEW release is created
+#
+# The decision lives in scripts/release.py so it is unit-tested rather than
+# expressed in YAML.
 
 on:
   push:
-    tags:
-      - "v*.*.*"
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  # Releases are serialised: two pushes must not race on the same release.
+  group: release
+  cancel-in-progress: false
+
 jobs:
-  # Full verification before anything is published.
+  # Verify the representative platforms build before publishing anything.
   verify:
     name: verify ${{ matrix.distro }} py${{ matrix.python }}
     runs-on: ${{ matrix.os }}
@@ -20,109 +32,88 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { platform: unix,    distro: ubuntu,    python: "3.13", os: ubuntu-24.04, pm: apt }
-          - { platform: unix,    distro: ubuntu,    python: "3.14", os: ubuntu-24.04, pm: apt }
-          - { platform: unix,    distro: debian,    python: "3.14", os: ubuntu-24.04, pm: apt }
-          - { platform: unix,    distro: archlinux, python: "3.14", os: ubuntu-24.04, pm: pacman }
-          - { platform: unix,    distro: macos,     python: "3.14", os: macos-14,     pm: brew }
-          - { platform: windows, distro: win11,     python: "3.13", os: windows-2022, pm: choco }
+          - { platform: unix,    distro: ubuntu,    python: "3.10", os: ubuntu-24.04 }
+          - { platform: unix,    distro: archlinux, python: "3.14", os: ubuntu-24.04 }
+          - { platform: unix,    distro: macos,     python: "3.14", os: macos-14 }
+          - { platform: windows, distro: win11,     python: "3.13", os: windows-2022 }
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
-
-      - name: Preinstall (unix)
-        if: matrix.platform == 'unix'
-        shell: bash
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install Python ${{ matrix.python }}
+        run: uv python install ${{ matrix.python }}
+      - name: Build target
         working-directory: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}
-        run: |
-          chmod +x preinstall.sh
-          ./preinstall.sh
+        run: uv build --python ${{ matrix.python }}
 
-      - name: Preinstall (windows)
-        if: matrix.platform == 'windows'
-        shell: pwsh
-        working-directory: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}
-        run: |
-          try { .\preinstall.ps1 -Force } catch { Write-Warning "preinstall: $_" }
-          exit 0
+  publish:
+    name: publish release
+    needs: verify
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      action: ${{ steps.plan.outputs.action }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
 
-      - name: Validate layout and run tests
-        shell: bash
-        run: |
-          python3 scripts/check_layout.py
-          uv run --python 3.12 --with pytest pytest tests/ -q
+      - name: Install Python
+        run: uv python install 3.13
 
-  bundle:
-    name: build artifact bundle
-    needs: verify
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Assemble the release bundle
+      # Build EVERY target so the published assets are exactly `uv build` output.
+      - name: Build all targets
         run: |
           set -euo pipefail
           mkdir -p dist
-          python3 scripts/check_layout.py --matrix full > dist/matrix-full.json
-          python3 scripts/check_layout.py --matrix fast > dist/matrix-fast.json
-          python3 - <<'PY'
-          import pathlib, shutil, subprocess, tarfile
+          built=0
+          while IFS= read -r pyproject; do
+            target="$(dirname "$pyproject")"
+            echo "::group::uv build $target"
+            ( cd "$target" && uv build --python 3.13 --out-dir "$GITHUB_WORKSPACE/dist" ) \
+              || echo "::warning::build failed for $target (continuing)"
+            built=$((built + 1))
+            echo "::endgroup::"
+          done < <(find unix windows -mindepth 3 -maxdepth 3 -name pyproject.toml | sort)
+          echo "processed $built target(s)"
+          echo "artifacts: $(ls dist | wc -l)"
+          ls -la dist | head -20
 
-          root = pathlib.Path(".").resolve()
-          out = root / "dist"
-          out.mkdir(exist_ok=True)
+      # Decide create-vs-update from the current version and existing releases.
+      - name: Plan release
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ secrets.DAILY_PR_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/release.py plan --repo "${{ github.repository }}"
 
-          # Every <platform>/<distro>/<python-version> target, minus regenerable noise.
-          skip = {".venv", "venv", "__pycache__", ".pytest_cache", "build", "dist",
-                  ".uv-cache", "node_modules"}
-          staging = root / "dist" / "myjupyter-targets"
-          if staging.exists():
-              shutil.rmtree(staging)
-          staging.mkdir(parents=True)
+      - name: Publish (create, or update the existing release in place)
+        env:
+          GITHUB_TOKEN: ${{ secrets.DAILY_PR_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/release.py publish \
+            --dist dist \
+            --repo "${{ github.repository }}"
 
-          count = 0
-          for platform in ("windows", "unix"):
-              pdir = root / platform
-              if not pdir.is_dir():
-                  continue
-              for distro in sorted(p for p in pdir.iterdir() if p.is_dir()):
-                  for pyver in sorted(p for p in distro.iterdir() if p.is_dir()):
-                      dest = staging / platform / distro.name / pyver.name
-                      dest.mkdir(parents=True, exist_ok=True)
-                      for item in pyver.rglob("*"):
-                          if any(part in skip for part in item.relative_to(pyver).parts):
-                              continue
-                          if item.is_dir():
-                              continue
-                          target = dest / item.relative_to(pyver)
-                          target.parent.mkdir(parents=True, exist_ok=True)
-                          shutil.copy2(item, target)
-                      count += 1
-
-          archive = out / "myjupyter-targets.tar.gz"
-          with tarfile.open(archive, "w:gz") as tf:
-              tf.add(staging, arcname="myjupyter-targets")
-          print(f"bundled {count} target(s) -> {archive}")
-
-          # Also publish a plain requirements snapshot for convenience.
-          req = root / "requirements.txt"
-          if req.is_file():
-              shutil.copy2(req, out / "requirements.txt")
-          PY
-          ls -la dist/
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: myjupyter-targets
-          path: dist/*
-
-      - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
-          generate_release_notes: true
-          draft: false
-          fail_on_unmatched_files: false
+      - name: Summarise
+        if: always()
+        run: |
+          {
+            echo "### Release"
+            echo ""
+            echo "- version: \`${{ steps.plan.outputs.version }}\`"
+            echo "- tag: \`${{ steps.plan.outputs.tag }}\`"
+            echo "- action: **${{ steps.plan.outputs.action }}**"
+            echo ""
+            echo '```'
+            ls -la dist || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

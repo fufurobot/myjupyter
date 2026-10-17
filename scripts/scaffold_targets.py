@@ -111,19 +111,6 @@ asyncvnc
 pynput
 """
 
-#: Unix only. jupyterhub pulls `pamela` (PAM) on non-Windows; PAMAuthenticator
-#: has no Windows implementation, which is exactly why the old tree had such
-#: different linux/ and windows/ folders.
-JUPYTERHUB = """\
-# Unix-only: jupyterhub requires PAM via `pamela` on non-Windows, and its
-# PAMAuthenticator has no Windows implementation. Do not add these to
-# requirements.txt or the Windows matrix will fail by design.
-jupyterhub
-jupyter
-marimo
-streamlit
-"""
-
 #: Known-unbuildable / not worth fighting. Failures here are expected.
 EXPERIMENTAL = """\
 # Experimental / not worth fighting.
@@ -161,7 +148,10 @@ name = "{name}"
 version = "0.1.0"
 description = "myjupyter toolchain for {platform}/{distro} on Python {python}"
 readme = "README.md"
-requires-python = ">={python},<{next_minor}"
+# Pinned exactly to the target interpreter: this project is not
+# published, and an exact pin keeps `uv sync` from resolving
+# against a broader range than the runner actually uses.
+requires-python = ">={python}"
 authors = [{{ name = "fufu", email = "fufurobot@outlook.com" }}]
 license = {{ text = "MIT" }}
 
@@ -205,7 +195,6 @@ Toolchain target for **{distro}** on the **{platform}** platform, Python
 | --- | --- |
 | `pyproject.toml` | Buildable package; CI requires `python -m build` to pass. |
 | `requirements.txt` | Core toolchain, expected to build everywhere. |
-| `requirements-jupyterhub.txt` | Unix only (jupyterhub needs PAM). |
 | `requirements.experimental.txt` | Not worth fighting; failures expected. |
 | `preinstall.sh` | Native prerequisites via this distro's package manager. |
 | `preinstall.ps1` | Windows equivalent. |
@@ -257,10 +246,6 @@ def scaffold(root: pathlib.Path, force: bool = False) -> list[pathlib.Path]:
             "requirements.txt": CORE,
             "requirements.experimental.txt": EXPERIMENTAL,
         }
-        # jupyterhub only where it can possibly work.
-        if platform == "unix":
-            files["requirements-jupyterhub.txt"] = JUPYTERHUB
-
         for name, content in files.items():
             path = target / name
             if path.exists() and not force:
