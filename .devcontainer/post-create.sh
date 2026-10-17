@@ -11,8 +11,9 @@
 #   * Official installers are preferred for the dev toolchain (uv), because
 #     distro packages lag badly.
 #   * It is idempotent: safe to re-run after a rebuild.
-#   * It installs the native `chmlib` needed to build `pychm`; see
-#     scripts/libchm.sh for why that is distro-specific.
+#   * It does NOT install native libraries to force an unbuildable package to
+#     compile. Anything that cannot build is isolated in
+#     requirements.experimental.txt instead (see the note about pychm there).
 
 set -euo pipefail
 
@@ -67,26 +68,26 @@ install_system_packages() {
       $SUDO env DEBIAN_FRONTEND=noninteractive apt-get update -qq
       $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         build-essential ca-certificates curl git jq unzip zip \
-        libchm-dev pkg-config
+        pkg-config
       ;;
     fedora)
       have dnf || return 0
       $SUDO dnf install -y gcc gcc-c++ make ca-certificates curl git jq unzip zip \
-        chmlib-devel pkgconf-pkg-config
+        pkgconf-pkg-config
       ;;
     archlinux)
       have pacman || return 0
       $SUDO pacman -S --needed --noconfirm base-devel ca-certificates curl git jq \
-        unzip zip chmlib pkgconf
+        unzip zip pkgconf
       ;;
     alpine)
       have apk || return 0
       $SUDO apk add --no-cache build-base ca-certificates curl git jq unzip zip \
-        chmlib-dev pkgconf
+        pkgconf
       ;;
     macos)
       have brew || return 0
-      brew install chmlib jq || warn "some brew packages failed"
+      brew install jq || warn "some brew packages failed"
       ;;
     nixos|guix)
       # Declarative systems: do not mutate global state here.
@@ -134,28 +135,13 @@ if have uv; then
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Native chmlib for pychm (the todo.md build failure)
+# 4. Verify a key target builds (buildability is the acceptance bar)
 # ---------------------------------------------------------------------------
-LIBCHM_DISTRO="$DISTRO"
-case "$DISTRO" in
-  debian)    LIBCHM_DISTRO="debian" ;;
-  fedora|alpine) LIBCHM_DISTRO="archlinux" ;;  # pacman/apt style fallbacks
-  nixos)     LIBCHM_DISTRO="nixos" ;;
-  guix)      LIBCHM_DISTRO="guix" ;;
-  macos)     LIBCHM_DISTRO="macos" ;;
-esac
-
-if [ -f "$REPO_ROOT/scripts/libchm.sh" ]; then
-  # shellcheck source=/dev/null
-  . "$REPO_ROOT/scripts/libchm.sh"
-  LIBCHM_LOG_PREFIX="post-create"
-  if [ "$LIBCHM_DISTRO" = "archlinux" ] && ! have pacman; then
-    warn "cannot map $DISTRO onto a libchm installer; expecting chmlib from system packages"
-  elif ensure_libchm "$LIBCHM_DISTRO"; then
-    log "chmlib ready; pychm will compile"
-  else
-    warn "chmlib not resolved; pychm builds may fail in this codespace"
-  fi
+if have uv && [ -f "$REPO_ROOT/unix/ubuntu/3.14/pyproject.toml" ]; then
+  log "checking that a target pyproject builds"
+  ( cd "$REPO_ROOT/unix/ubuntu/3.14" && uv build --wheel --quiet ) \
+    && log "target builds OK" \
+    || warn "target build failed in this codespace"
 fi
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,7 @@
+# Unix-only: jupyterhub requires PAM via `pamela` on non-Windows, and its
+# PAMAuthenticator has no Windows implementation. Do not add these to
+# requirements.txt or the Windows matrix will fail by design.
+jupyterhub
+jupyter
+marimo
+streamlit

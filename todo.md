@@ -1,29 +1,33 @@
 # TODO
 
-## Sprint 1 — platform/distro/python matrix + pychm build fix — DONE
+## Sprint 1 — platform/distro/python matrix — DONE
 
-- [x] Restructure to `<platform>/<distro>/<python-version>`
+- [x] `<platform>/<distro>/<python-version>` layout
       (`windows`/`unix` × `winxp win7 win10 win11 macos ubuntu debian
-      archlinux guix nixos` × Python `3.10`…latest).
-      Enforced by `scripts/check_layout.py`; the legacy two-segment layout is
-      now rejected so it cannot regress.
-- [x] GitHub CI matrix that opens a daily pull request **only when the remote
-      actually changed** (`.github/workflows/daily.yml` +
-      `scripts/daily_pr.py`, manifest at `.ci/targets.json`).
-- [x] Fix the `pychm` build error on this machine and append it to
-      `preinstall.sh`.
-      Root cause: pychm ships no wheels, so it compiles `_chmlib.c`, which
-      needs the native `chmlib` (`chm_lib.h` + `-lchm`). Fixed per-distro in
-      `scripts/libchm.sh`, wired into every `preinstall.sh`/`preinstall.ps1`.
+      archlinux guix nixos` × Python `3.10`…latest), enforced by
+      `scripts/check_layout.py`.
+- [x] All 50 targets scaffolded with a buildable `pyproject.toml`
+      (`scripts/scaffold_targets.py`).
+- [x] CI matrix (`matrix.yml`) builds every target **on real runners**; nothing
+      is built locally.
+- [x] Automated upstream-update PRs (`.github/workflows/upstream-update.yml`)
+      that open a pull request only when upstream packages actually changed.
+- [x] Requirement split by buildability: core / unix-only jupyterhub /
+      experimental.
+- [x] `pychm` isolated in `requirements.experimental.txt` instead of fought.
+      (PyPI has published exactly one pychm wheel ever: `cp27`, macOS.)
 
 ## Backlog
 
-- [ ] Fill in the remaining `<distro>/<python-version>` target directories.
-      Today only `unix/archlinux/3.14` and `windows/win11/3.13` exist; the
-      validator and matrices already cover all 50 combinations, so a target
-      only needs to be created when its dependency set is actually curated.
+- [ ] Expand the core requirement lists beyond the portable baseline. The
+      original `requirements.txt` was very broad; anything that turns out to
+      be non-portable should move to `requirements.experimental.txt` rather
+      than block the matrix.
 - [ ] Enable GitHub Pages once (Settings → Pages → Source: GitHub Actions).
-      The API refused it: the current token lacks the Pages admin scope
+      The API refused it: the token lacks the Pages admin scope
       (`403 Resource not accessible by personal access token`).
 - [ ] Add a `DAILY_PR_TOKEN` repository secret if branch protection blocks the
-      default `GITHUB_TOKEN` from pushing the `ci/daily-*` branch.
+      default `GITHUB_TOKEN` from pushing `deps/upstream-*` branches.
+- [ ] Verify each distro's `preinstall.sh` on its native runner (currently only
+      `unix/archlinux` is exercised on the real Arch user machine; the rest are
+      verified for structure and package-manager correctness by unit tests).

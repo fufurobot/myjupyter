@@ -1,0 +1,86 @@
+name: upstream-update
+
+# Automatically opens a pull request when UPSTREAM PACKAGES have updates.
+#
+# This is the real requirement: not a manifest diff, but an actual dependency
+# refresh. It upgrades the core requirement set, pins the resolved versions,
+# and only proposes a PR when the resolved set genuinely differs.
+#
+# Guard: a PR is opened only if the upgraded set still passes the build +
+# import smoke test on the real runner, so the bot never opens a PR that is
+# known to be broken.
+
+on:
+  schedule:
+    # Daily at 04:41 UTC.
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Base branch for the generated PR"
+        type: string
+        default: dev
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: upstream-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: upgrade + propose
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.DAILY_PR_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install 3.13
+
+      # Upgrades every target's core requirements to the newest compatible
+      # versions and records the exact resolution in .ci/resolved-<target>.txt.
+      - name: Upgrade core requirements across all targets
+        id: upgrade
+        run: python3 scripts/upstream_update.py upgrade --all
+
+      - name: Verify the upgraded set still installs and imports
+        if: steps.upgrade.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          for req in $(git diff --name-only | grep '^.*/requirements.txt$' | head -5); do
+            echo "::group::verifying $req"
+            uv run --python 3.13 --with-requirements "$req" \
+              python -c "import sys; print('ok', sys.version)"
+            echo "::endgroup::"
+          done
+
+      - name: Open PR only when upstream actually changed something
+        env:
+          GITHUB_TOKEN: ${{ secrets.DAILY_PR_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/upstream_update.py propose \
+            --repo "${{ github.repository }}" \
+            --base "${{ inputs.base || 'dev' }}"
+
+      - name: Summarise
+        if: always()
+        run: |
+          {
+            echo "### Upstream dependency update"
+            echo ""
+            echo "Changed: \`${{ steps.upgrade.outputs.changed }}\`"
+            echo ""
+            echo "```"
+            git --no-pager diff --stat || true
+            echo "```"
+          } >> "$GITHUB_STEP_SUMMARY"

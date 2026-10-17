@@ -1,67 +1,40 @@
 #!/usr/bin/env bash
-# preinstall.sh - Arch Linux (unix) preinstall for myjupyter.
+# preinstall.sh - native prerequisites for archlinux (unix), Python 3.14.
 #
-# Layered by distro on purpose: native package managers and package NAMES
-# differ per distribution. The canonical example is the `pychm` build.
+# Scope: ONLY what a compiler and a few C extensions need to build. Nothing
+# here fights a stubborn package; anything that cannot be built is isolated in
+# requirements.experimental.txt instead.
+#
+# pychm is deliberately NOT installed here. PyPI has exactly one pychm wheel
+# in its history (cp27, macOS), so every Python 3 install compiles it against
+# the native chmlib. That is a per-package problem, not a toolchain problem.
 set -euo pipefail
 
 DISTRO="archlinux"
-PYTHON_VERSION="3.14"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$HERE/../../.." && pwd)"
 
 log()  { printf '\033[1;34m[preinstall:archlinux]\033[0m %s\n' "$*" >&2; }
 warn() { printf '\033[1;33m[preinstall:archlinux]\033[0m %s\n' "$*" >&2; }
-err()  { printf '\033[1;31m[preinstall:archlinux]\033[0m %s\n' "$*" >&2; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
 SUDO=""
 detect_sudo() {
   if [ "$(id -u)" -eq 0 ]; then SUDO=""; return 0; fi
   if have sudo && sudo -n true 2>/dev/null; then SUDO="sudo"; return 0; fi
-  SUDO=""
-  return 1
+  SUDO=""; return 1
 }
 
-require_elevation() {
-  err "cannot install system packages: not root and passwordless sudo is unavailable."
-  err "re-run with elevated privileges, or pre-install the packages listed above."
-  exit 1
+install_deps() {
+  have pacman || {{ warn "pacman not found; skipping system packages"; return 0; }}
+  detect_sudo || {{ warn "no passwordless sudo; skipping system packages"; return 0; }}
+  # shellcheck disable=SC2086
+  $SUDO pacman -S --needed --noconfirm base-devel ca-certificates curl git
+  log "system build prerequisites present"
 }
 
-# ---------------------------------------------------------------------------
-# 1. Native chmlib - REQUIRED to build pychm (see scripts/libchm.sh)
-# ---------------------------------------------------------------------------
-# Without it: chm/chmlib_search.h:4:10: fatal error: chm_lib.h: No such file or directory
-# shellcheck source=/dev/null
-. "$REPO_ROOT/scripts/libchm.sh"
-LIBCHM_LOG_PREFIX="preinstall:archlinux"
-
-install_native_deps() {
-  if ensure_libchm "$DISTRO"; then
-    log "chmlib OK"
-  else
-    err "chmlib unavailable; pychm will fail to compile."
-    exit 1
-  fi
-
-  # Extra system libraries that some wheels need to build/link on Arch.
-  local pkgs=()
-  have node || pkgs+=(nodejs)
-  have npm  || pkgs+=(npm)
-  if [ ${#pkgs[@]} -gt 0 ]; then
-    detect_sudo || require_elevation
-    # shellcheck disable=SC2086
-    $SUDO pacman -S --needed --noconfirm "${pkgs[@]}"
-  fi
-}
-
-# ---------------------------------------------------------------------------
-# 2. Main
-# ---------------------------------------------------------------------------
 main() {
-  install_native_deps
-  log "preinstall complete for $DISTRO (python $PYTHON_VERSION)"
+  install_deps
+  log "preinstall complete for $DISTRO"
 }
 
 main "$@"

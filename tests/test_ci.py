@@ -1,13 +1,18 @@
-"""Tests for the generated GitHub Pages site and the CI workflow files.
+"""Tests for CI workflows, the Pages site, and repo automation.
 
-The site must stay in lockstep with ``scripts/check_layout.py`` (single source
-of truth), and the workflows must be valid YAML with the branch model wired up:
-``dev`` fast, ``main`` full, tags release.
+The CI contract now reflects the revised design:
+
+* the matrix builds every ``<platform>/<distro>/<python-version>`` on **real
+  runners** - nothing is built locally;
+* upstream package updates are detected and proposed as pull requests
+  automatically;
+* ``dev`` is fast, ``main`` is full, tags publish releases.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 import sys
 from pathlib import Path
@@ -20,8 +25,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 
 
-def _load(name: str, relative: str):
-    path = REPO_ROOT / relative
+def _load(name: str, rel: str):
+    path = REPO_ROOT / rel
     if not path.is_file():
         pytest.fail(f"missing implementation file: {path}")
     spec = importlib.util.spec_from_file_location(name, path)
@@ -31,206 +36,240 @@ def _load(name: str, relative: str):
     return module
 
 
-bs = _load("build_site", "scripts/build_site.py")
 cl = _load("check_layout", "scripts/check_layout.py")
+bs = _load("build_site", "scripts/build_site.py")
+uu = _load("upstream_update", "scripts/upstream_update.py")
 
-
-# --------------------------------------------------------------------------
-# Site generation
-# --------------------------------------------------------------------------
-
-class TestSiteBuild:
-    def test_build_creates_index(self, tmp_path):
-        index = bs.build(tmp_path)
-        assert index.is_file()
-
-    def test_build_creates_nojekyll(self, tmp_path):
-        bs.build(tmp_path)
-        assert (tmp_path / ".nojekyll").is_file()
-
-    def test_index_is_valid_ish_html(self, tmp_path):
-        index = bs.build(tmp_path)
-        text = index.read_text(encoding="utf-8")
-        assert text.startswith("<!DOCTYPE html>")
-        assert text.rstrip().endswith("</html>")
-
-    def test_index_has_no_unrendered_placeholders(self, tmp_path):
-        index = bs.build(tmp_path)
-        text = index.read_text(encoding="utf-8")
-        assert not re.search(r"\{[a-z_]+\}", text), "unrendered format placeholder"
-
-    def test_index_lists_every_committed_target(self, tmp_path):
-        index = bs.build(tmp_path)
-        text = index.read_text(encoding="utf-8")
-        for _, parts in cl.iter_target_dirs(REPO_ROOT):
-            assert "/".join(parts) in text
-
-    def test_index_mentions_every_distro(self, tmp_path):
-        index = bs.build(tmp_path)
-        text = index.read_text(encoding="utf-8")
-        for distro in cl.DISTROS:
-            assert distro in text, f"{distro} missing from the site"
-
-    def test_index_documents_the_libchm_package_names(self, tmp_path):
-        index = bs.build(tmp_path)
-        text = index.read_text(encoding="utf-8")
-        assert "libchm-dev" in text   # debian/ubuntu
-        assert "chmlib" in text       # arch/macos/guix/nix
-
-    def test_index_escapes_html(self, tmp_path):
-        """Distro/vendor strings must be escaped, never injected raw."""
-        index = bs.build(tmp_path)
-        text = index.read_text(encoding="utf-8")
-        assert "<script>" not in text
-
-
-# --------------------------------------------------------------------------
-# Workflows
-# --------------------------------------------------------------------------
 
 def workflow_path(name: str) -> Path:
     return WORKFLOWS / f"{name}.yml"
 
 
+def triggers(data: dict):
+    return data.get("on") if "on" in data else data.get(True)
+
+
 @pytest.fixture(scope="module")
 def workflows() -> dict[str, dict]:
-    parsed = {}
-    for path in sorted(WORKFLOWS.glob("*.yml")):
-        parsed[path.stem] = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return parsed
+    return {
+        path.stem: yaml.safe_load(path.read_text(encoding="utf-8"))
+        for path in sorted(WORKFLOWS.glob("*.yml"))
+    }
+
+
+# --------------------------------------------------------------------------
+# Workflow presence and validity
+# --------------------------------------------------------------------------
+
+REQUIRED = ["dev", "full", "matrix", "pages", "release", "upstream-update"]
 
 
 class TestWorkflowPresence:
-    @pytest.mark.parametrize("name", ["dev", "full", "daily", "pages", "release"])
-    def test_workflow_exists(self, name):
+    @pytest.mark.parametrize("name", REQUIRED)
+    def test_exists(self, name):
         assert workflow_path(name).is_file()
 
-    @pytest.mark.parametrize("name", ["dev", "full", "daily", "pages", "release"])
-    def test_workflow_is_valid_yaml(self, name):
-        data = yaml.safe_load(workflow_path(name).read_text(encoding="utf-8"))
-        assert isinstance(data, dict)
+    @pytest.mark.parametrize("name", REQUIRED)
+    def test_valid_yaml(self, name, workflows):
+        assert isinstance(workflows[name], dict)
 
-    @pytest.mark.parametrize("name", ["dev", "full", "daily", "pages", "release"])
-    def test_workflow_has_jobs(self, name, workflows):
-        assert workflows[name].get("jobs"), f"{name} has no jobs"
+    @pytest.mark.parametrize("name", REQUIRED)
+    def test_has_jobs(self, name, workflows):
+        assert workflows[name].get("jobs")
 
-    @pytest.mark.parametrize("name", ["dev", "full", "daily", "pages", "release"])
-    def test_workflow_is_named(self, name, workflows):
+    @pytest.mark.parametrize("name", REQUIRED)
+    def test_is_named(self, name, workflows):
         assert workflows[name].get("name")
 
+    @pytest.mark.parametrize("name", REQUIRED)
+    def test_steps_are_well_formed(self, name, workflows):
+        for job_id, job in workflows[name]["jobs"].items():
+            if not isinstance(job, dict):
+                pytest.fail(f"{name}:{job_id} is not a mapping")
+            if "uses" not in job:
+                assert "steps" in job, f"{name}:{job_id} has neither uses nor steps"
+            for step in job.get("steps", []) or []:
+                assert "uses" in step or "run" in step, f"{name}:{job_id} bad step"
 
-class TestBranchModel:
-    def test_dev_runs_on_dev_branch(self, workflows):
-        text = workflow_path("dev").read_text(encoding="utf-8")
-        assert "dev" in text
+    @pytest.mark.parametrize("name", REQUIRED)
+    def test_needs_reference_real_jobs(self, name, workflows):
+        jobs = workflows[name]["jobs"]
+        for job_id, job in jobs.items():
+            if not isinstance(job, dict):
+                continue
+            needs = job.get("needs", [])
+            needs = [needs] if isinstance(needs, str) else (needs or [])
+            for dep in needs:
+                assert dep in jobs, f"{name}:{job_id} needs unknown job {dep}"
 
-    def test_full_runs_on_main(self, workflows):
-        triggers = workflows["full"][True] if True in workflows["full"] else workflows["full"]["on"]
-        assert triggers["push"]["branches"] == ["main"]
 
-    def test_release_runs_on_tags(self, workflows):
-        data = workflows["release"]
-        triggers = data.get("on") or data.get(True)
-        assert any(t.startswith("v") for t in triggers["push"]["tags"])
+# --------------------------------------------------------------------------
+# Matrix is the primary CI
+# --------------------------------------------------------------------------
 
-    def test_daily_has_a_schedule(self, workflows):
-        data = workflows["daily"]
-        triggers = data.get("on") or data.get(True)
-        assert triggers.get("schedule"), "daily workflow must be scheduled"
+class TestMatrixWorkflow:
+    def test_matrix_workflow_builds_on_real_runners(self, workflows):
+        text = workflow_path("matrix").read_text(encoding="utf-8")
+        assert "runs-on" in text
+        assert "runners" not in text.lower() or "self-hosted" not in text
 
-    def test_daily_schedule_is_valid_cron(self, workflows):
-        data = workflows["daily"]
-        triggers = data.get("on") or data.get(True)
-        for entry in triggers["schedule"]:
-            fields = entry["cron"].split()
-            assert len(fields) == 5, f"bad cron: {entry['cron']}"
-
-    def test_pages_is_reusable_and_callable(self, workflows):
-        data = workflows["pages"]
-        triggers = data.get("on") or data.get(True)
-        assert "workflow_call" in triggers
-
-    def test_full_calls_the_pages_workflow(self, workflows):
-        jobs = workflows["full"]["jobs"]
-        assert any(
-            isinstance(job, dict) and "uses" in job and "pages" in str(job["uses"])
-            for job in jobs.values()
+    def test_matrix_generated_from_check_layout(self):
+        text = workflow_path("matrix").read_text(encoding="utf-8")
+        assert "check_layout.py --matrix" in text, (
+            "the matrix must come from the validator so it cannot drift"
         )
 
+    def test_matrix_builds_pyproject(self):
+        text = workflow_path("matrix").read_text(encoding="utf-8")
+        assert "uv build" in text
 
-class TestDailyPrWorkflowContract:
-    def test_daily_invokes_the_pr_script(self):
-        text = workflow_path("daily").read_text(encoding="utf-8")
-        assert "scripts/daily_pr.py" in text
+    def test_matrix_installs_core_requirements(self):
+        text = workflow_path("matrix").read_text(encoding="utf-8")
+        assert "requirements.txt" in text
 
-    def test_daily_uses_a_dry_run_plan_step(self):
-        text = workflow_path("daily").read_text(encoding="utf-8")
-        assert "--dry-run" in text
+    def test_matrix_has_a_fast_and_full_tier(self, workflows):
+        jobs = workflows["matrix"]["jobs"]
+        assert "build" in jobs
+        assert "build-full" in jobs
 
-    def test_daily_reports_back_to_the_issue(self, workflows):
-        text = workflow_path("daily").read_text(encoding="utf-8")
-        assert "/issues/1/comments" in text
+    def test_full_tier_gated_to_main_or_dispatch(self, workflows):
+        job = workflows["matrix"]["jobs"]["build-full"]
+        cond = str(job.get("if", ""))
+        assert "refs/heads/main" in cond or "workflow_dispatch" in cond
 
-    def test_daily_declares_pr_write_permission(self, workflows):
-        perms = workflows["daily"].get("permissions", {})
+    def test_optional_tier_is_allowed_to_fail(self, workflows):
+        job = workflows["matrix"]["jobs"]["optional"]
+        steps = job["steps"]
+        assert any(s.get("continue-on-error") for s in steps), (
+            "experimental sets must not turn the matrix red"
+        )
+
+    def test_matrix_uses_portable_venv_paths(self):
+        """A venv interpreter is .venv/bin/python on POSIX but Scripts/ on Windows."""
+        code = "\n".join(
+            line for line in workflow_path("matrix").read_text().splitlines()
+            if not line.strip().startswith("#")
+        )
+        assert ".venv-ci/bin/python" not in code
+        assert "uv run" in code, "uv run abstracts the venv layout"
+
+
+# --------------------------------------------------------------------------
+# Upstream update automation
+# --------------------------------------------------------------------------
+
+class TestUpstreamUpdate:
+    def test_workflow_exists(self):
+        assert workflow_path("upstream-update").is_file()
+
+    def test_is_scheduled_daily(self, workflows):
+        trig = triggers(workflows["upstream-update"])
+        assert trig.get("schedule"), "must run on a schedule"
+        for entry in trig["schedule"]:
+            assert len(entry["cron"].split()) == 5
+
+    def test_supports_manual_dispatch(self, workflows):
+        assert "workflow_dispatch" in triggers(workflows["upstream-update"])
+
+    def test_can_write_contents_and_prs(self, workflows):
+        perms = workflows["upstream-update"].get("permissions", {})
         assert perms.get("pull-requests") == "write"
         assert perms.get("contents") == "write"
 
-    def test_daily_supports_manual_force_dispatch(self, workflows):
-        data = workflows["daily"]
-        triggers = data.get("on") or data.get(True)
-        assert "workflow_dispatch" in triggers
-        assert "force" in triggers["workflow_dispatch"]["inputs"]
+    def test_invokes_the_updater(self):
+        text = workflow_path("upstream-update").read_text(encoding="utf-8")
+        assert "scripts/upstream_update.py" in text
+
+    def test_verifies_before_proposing(self):
+        text = workflow_path("upstream-update").read_text(encoding="utf-8")
+        assert "uv run" in text, "the upgraded set must be verified on a real runner"
+
+    def test_only_proposes_when_changed(self):
+        text = workflow_path("upstream-update").read_text(encoding="utf-8")
+        assert "changed" in text
 
 
-class TestMatrixWorkflows:
-    def test_dev_matrix_covers_all_distros(self, workflows):
-        text = workflow_path("dev").read_text(encoding="utf-8")
-        for distro in cl.DISTROS:
-            assert distro in text, f"{distro} missing from the dev matrix"
+class TestUpstreamUpdateLogic:
+    def test_normalise_strips_comments_and_blank_lines(self):
+        raw = "# comment\n\nfoo==1.0\nbar==2.0\n"
+        assert uu.normalise(raw) == "bar==2.0\nfoo==1.0\n"
 
-    def test_full_matrix_covers_all_python_versions(self, workflows):
-        text = workflow_path("full").read_text(encoding="utf-8")
-        for version in cl.PYTHON_VERSIONS:
-            assert f'python: "{version}"' in text, f"{version} missing from full matrix"
+    def test_normalise_sorts_for_stable_diffs(self):
+        a = uu.normalise("z==1\n# x\na==2\n")
+        b = uu.normalise("a==2\nz==1\n")
+        assert a == b
 
-    def test_workflows_are_keyed_by_platform_distro_python(self):
-        for name in ("dev", "full", "daily", "release"):
-            text = workflow_path(name).read_text(encoding="utf-8")
-            assert "matrix.distro" in text
-            assert "matrix.python" in text
+    def test_normalise_detects_a_version_bump(self):
+        assert uu.normalise("pandas==3.0.6\n") != uu.normalise("pandas==3.0.7\n")
 
-    def test_preinstall_is_invoked_by_the_matrix(self):
-        for name in ("dev", "full", "daily", "release"):
-            text = workflow_path(name).read_text(encoding="utf-8")
-            assert "preinstall.sh" in text, f"{name} never runs preinstall.sh"
+    def test_build_body_mentions_the_issue(self):
+        body = uu.build_body([])
+        assert "#1" in body
 
-    def test_windows_targets_use_powershell_preinstall(self):
-        for name in ("dev", "full", "daily", "release"):
-            text = workflow_path(name).read_text(encoding="utf-8")
-            if "windows" in text:
-                assert "preinstall.ps1" in text, (
-                    f"{name} has windows targets but never runs preinstall.ps1"
-                )
-
-    def test_layout_validator_runs_in_ci(self):
-        for name in ("dev", "full", "daily", "release"):
-            text = workflow_path(name).read_text(encoding="utf-8")
-            assert "check_layout.py" in text, f"{name} does not validate the layout"
+    def test_build_body_handles_empty_change(self):
+        assert isinstance(uu.build_body([]), str)
 
 
 # --------------------------------------------------------------------------
-# Dependabot / devcontainer / env template
+# Pages site
+# --------------------------------------------------------------------------
+
+class TestSiteBuild:
+    def test_build_creates_index(self, tmp_path):
+        assert bs.build(tmp_path).is_file()
+
+    def test_creates_nojekyll(self, tmp_path):
+        bs.build(tmp_path)
+        assert (tmp_path / ".nojekyll").is_file()
+
+    def test_no_unrendered_placeholders(self, tmp_path):
+        text = bs.build(tmp_path).read_text(encoding="utf-8")
+        assert not re.search(r"\{[a-z_]+\}", text)
+
+    def test_lists_every_committed_target(self, tmp_path):
+        text = bs.build(tmp_path).read_text(encoding="utf-8")
+        for _, parts in cl.iter_target_dirs(REPO_ROOT):
+            assert "/".join(parts) in text
+
+    def test_mentions_every_distro(self, tmp_path):
+        text = bs.build(tmp_path).read_text(encoding="utf-8")
+        for distro in cl.DISTROS:
+            assert distro in text
+
+    def test_site_documents_the_requirement_split(self, tmp_path):
+        text = bs.build(tmp_path).read_text(encoding="utf-8")
+        assert "requirements-jupyterhub" in text or "jupyterhub" in text
+        assert "experimental" in text
+
+
+# --------------------------------------------------------------------------
+# Branch model
+# --------------------------------------------------------------------------
+
+class TestBranchModel:
+    def test_dev_triggers_on_dev(self, workflows):
+        assert "dev" in workflow_path("dev").read_text(encoding="utf-8")
+
+    def test_full_triggers_on_main(self, workflows):
+        assert triggers(workflows["full"])["push"]["branches"] == ["main"]
+
+    def test_release_triggers_on_tags(self, workflows):
+        trig = triggers(workflows["release"])
+        assert any(t.startswith("v") for t in trig["push"]["tags"])
+
+    def test_pages_is_reusable(self, workflows):
+        assert "workflow_call" in triggers(workflows["pages"])
+
+
+# --------------------------------------------------------------------------
+# Repo automation
 # --------------------------------------------------------------------------
 
 class TestRepoAutomation:
-    def test_dependabot_config_exists(self):
-        assert (REPO_ROOT / ".github" / "dependabot.yml").is_file()
-
-    def test_dependabot_is_valid_yaml(self):
-        data = yaml.safe_load(
-            (REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
-        )
+    def test_dependabot_exists_and_is_valid(self):
+        path = REPO_ROOT / ".github" / "dependabot.yml"
+        assert path.is_file()
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert data["version"] == 2
         assert data["updates"]
 
@@ -238,68 +277,36 @@ class TestRepoAutomation:
         data = yaml.safe_load(
             (REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
         )
-        ecosystems = {u["package-ecosystem"] for u in data["updates"]}
-        assert "pip" in ecosystems
-        assert "github-actions" in ecosystems
+        eco = {u["package-ecosystem"] for u in data["updates"]}
+        assert "pip" in eco and "github-actions" in eco
 
-    def test_devcontainer_json_exists(self):
-        assert (REPO_ROOT / ".devcontainer" / "devcontainer.json").is_file()
-
-    def test_devcontainer_json_is_valid(self):
-        import json
-
+    def test_devcontainer_is_valid_and_minimal(self):
         data = json.loads(
-            (REPO_ROOT / ".devcontainer" / "devcontainer.json").read_text(
-                encoding="utf-8"
-            )
+            (REPO_ROOT / ".devcontainer" / "devcontainer.json").read_text(encoding="utf-8")
         )
         assert data.get("postCreateCommand")
-
-    def test_devcontainer_keeps_json_minimal(self):
-        import json
-
-        data = json.loads(
-            (REPO_ROOT / ".devcontainer" / "devcontainer.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        # Delegate heavy lifting to the script, not inline JSON.
         assert len(json.dumps(data)) < 2000
 
-    def test_devcontainer_calls_post_create_script(self):
-        import json
-
-        data = json.loads(
-            (REPO_ROOT / ".devcontainer" / "devcontainer.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        assert "post-create.sh" in json.dumps(data)
-
-    def test_post_create_script_exists_and_is_strict(self):
-        script = REPO_ROOT / ".devcontainer" / "post-create.sh"
-        assert script.is_file()
-        assert "set -euo pipefail" in script.read_text(encoding="utf-8")
-
-    def test_post_create_does_not_assume_a_distribution(self):
-        text = (REPO_ROOT / ".devcontainer" / "post-create.sh").read_text(
-            encoding="utf-8"
-        )
-        # Must detect rather than assume (no bare `apt-get install` without a guard).
+    def test_post_create_does_not_assume_a_distro(self):
+        text = (REPO_ROOT / ".devcontainer" / "post-create.sh").read_text(encoding="utf-8")
+        assert "set -euo pipefail" in text
         assert "command -v" in text
 
-    def test_env_example_exists(self):
-        assert (REPO_ROOT / ".env.example").is_file()
+    def test_post_create_uses_official_uv_installer(self):
+        text = (REPO_ROOT / ".devcontainer" / "post-create.sh").read_text(encoding="utf-8")
+        assert "astral.sh/uv" in text
 
-    def test_env_example_has_no_real_secrets(self):
+    def test_env_example_has_no_secrets(self):
         text = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
         assert "github_pat_" not in text
         assert "ghp_" not in text
-
-    def test_env_example_documents_the_token_variable(self):
-        text = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
         assert "GITHUB_TOKEN" in text
 
     def test_env_is_gitignored(self):
         text = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
         assert re.search(r"^\.env$", text, re.MULTILINE)
+
+    def test_gitattributes_pins_line_endings(self):
+        text = (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8")
+        assert re.search(r"^\*\.sh\s+.*eol=lf", text, re.MULTILINE)
+        assert re.search(r"^\*\.ps1\s+.*eol=crlf", text, re.MULTILINE)
