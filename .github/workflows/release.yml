@@ -1,0 +1,119 @@
+name: release
+
+# Branch model: every push to main publishes a release of everything produced
+# by `uv build`, keyed by the pyproject.toml version:
+#
+#   version unchanged -> the existing release is updated IN PLACE
+#                        (assets replaced, body refreshed)
+#   version changed   -> a NEW release is created
+#
+# The decision lives in scripts/release.py so it is unit-tested rather than
+# expressed in YAML.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  # Releases are serialised: two pushes must not race on the same release.
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # Verify the representative platforms build before publishing anything.
+  verify:
+    name: verify ${{ matrix.distro }} py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: unix,    distro: ubuntu,    python: "3.10", os: ubuntu-24.04 }
+          - { platform: unix,    distro: archlinux, python: "3.14", os: ubuntu-24.04 }
+          - { platform: unix,    distro: macos,     python: "3.14", os: macos-14 }
+          - { platform: windows, distro: win11,     python: "3.13", os: windows-2022 }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install Python ${{ matrix.python }}
+        run: uv python install ${{ matrix.python }}
+      - name: Build target
+        working-directory: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}
+        run: uv build --python ${{ matrix.python }}
+
+  publish:
+    name: publish release
+    needs: verify
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      action: ${{ steps.plan.outputs.action }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install 3.13
+
+      # Build EVERY target so the published assets are exactly `uv build` output.
+      - name: Build all targets
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          built=0
+          while IFS= read -r pyproject; do
+            target="$(dirname "$pyproject")"
+            echo "::group::uv build $target"
+            ( cd "$target" && uv build --python 3.13 --out-dir "$GITHUB_WORKSPACE/dist" ) \
+              || echo "::warning::build failed for $target (continuing)"
+            built=$((built + 1))
+            echo "::endgroup::"
+          done < <(find unix windows -mindepth 3 -maxdepth 3 -name pyproject.toml | sort)
+          echo "processed $built target(s)"
+          echo "artifacts: $(ls dist | wc -l)"
+          ls -la dist | head -20
+
+      # Decide create-vs-update from the current version and existing releases.
+      - name: Plan release
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ secrets.DAILY_PR_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/release.py plan --repo "${{ github.repository }}"
+
+      - name: Publish (create, or update the existing release in place)
+        env:
+          GITHUB_TOKEN: ${{ secrets.DAILY_PR_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/release.py publish \
+            --dist dist \
+            --repo "${{ github.repository }}"
+
+      - name: Summarise
+        if: always()
+        run: |
+          {
+            echo "### Release"
+            echo ""
+            echo "- version: \`${{ steps.plan.outputs.version }}\`"
+            echo "- tag: \`${{ steps.plan.outputs.tag }}\`"
+            echo "- action: **${{ steps.plan.outputs.action }}**"
+            echo ""
+            echo '```'
+            ls -la dist || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,81 @@
+# Toolchain for unix/archlinux on Python 3.13.
+#
+# This list is intentionally BROAD. Each distro folder carries what is
+# installable only under that distro; the shared core is repeated below so the
+# file is self-contained.
+#
+# The leaf pyproject.toml ADDS these requirements (uv add -r requirements.txt)
+# and commits uv.lock, so CI's `uv sync --upgrade` turns upstream drift into a
+# pull request against dev.
+#
+# Packages that need native libraries and are not worth fighting live in
+# requirements.experimental.txt instead.
+
+# --- dev tooling -----------------------------------------------------------
+ruff
+mypy
+flake8
+pytest
+pytest-asyncio
+pytest-cov
+pytest-mock
+pytest-xdist
+pylint
+pyright
+
+# --- cli / tui -------------------------------------------------------------
+typer
+rich
+tqdm
+
+# --- networking ------------------------------------------------------------
+requests
+dnspython
+graphql-core
+fastapi
+uvicorn
+openai
+
+# --- data ------------------------------------------------------------------
+pandas
+pyarrow
+openpyxl
+lxml
+beautifulsoup4
+html5lib
+python-docx
+pdfplumber
+
+# --- nlp -------------------------------------------------------------------
+regex
+pypinyin
+nltk
+tree-sitter-language-pack
+
+# --- math ------------------------------------------------------------------
+sympy
+networkx
+
+# --- imaging / plotting ----------------------------------------------------
+pillow
+plotly
+matplotlib
+segno
+
+# --- automation ------------------------------------------------------------
+playwright
+asyncssh
+asyncvnc
+
+# --- unix only -------------------------------------------------------------
+# jupyterhub declares `pamela` for sys_platform != "win32", and its
+# PAMAuthenticator has no Windows implementation. Keep it out of Windows.
+jupyterhub
+jupyter
+jupyterlab
+marimo
+streamlit
+
+# --- unix native tooling ---------------------------------------------------
+# CLI/TUI and system-integration helpers that need POSIX subsystems.
+pynput

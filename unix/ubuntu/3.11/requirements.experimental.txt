@@ -1,0 +1,23 @@
+# Experimental / not worth fighting.
+#
+# These are intentionally EXCLUDED from requirements.txt so that one stubborn
+# package cannot turn the whole matrix red.
+#
+# --- pychm -----------------------------------------------------------------
+# `pip install pychm` ALWAYS compiles from source on Python 3:
+# PyPI has exactly one pychm wheel in its whole history
+# (pychm-0.8.4.1-cp27-none-macosx_10_9_x86_64.whl) - Python 2.7 only.
+# Building requires the native chmlib (chm_lib.h + -lchm and, on MSVC,
+# -DWIN32 because the sources test `#ifdef WIN32` while MSVC defines only
+# _WIN32). Install your distro's chmlib first if you actually want it:
+#   archlinux: pacman -S chmlib        debian/ubuntu: apt install libchm-dev
+#   guix/nix:  chmlib                  macos: brew install chmlib
+pychm
+
+# --- heavy / platform-bound ------------------------------------------------
+# torch is deliberately not listed: install the CUDA-matched build by checking
+# `nvidia-smi`, otherwise you get the CPU wheel you probably did not want.
+# jupyterhub is in requirements-jupyterhub.txt (unix only).
+# cudf: install via the rapidsai conda channel.
+# MahjongGB: requires the MSVC C++ build tools on Windows.
+# xlwings: drives Microsoft Excel; not supported on linux.

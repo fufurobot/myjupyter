@@ -1,0 +1,10 @@
+# Per-distro runtime state; never commit.
+#
+# NOTE: uv.lock is deliberately NOT ignored. The committed lock is what
+# `uv sync --upgrade` diffs to detect upstream drift; ignoring it meant a
+# target had no lock on CI at all (run 39013875084).
+jupyterhub.sqlite
+jupyterhub_cookie_secret
+jupyterhub-proxy.pid
+jhlog.log
+.venv/

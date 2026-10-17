@@ -1,0 +1,61 @@
+# Line-ending policy.
+#
+# WHY THIS FILE EXISTS
+#   Without it, Git's core.autocrlf setting rewrites text files on checkout.
+#   On a Windows runner (core.autocrlf=true) every *.sh file is converted to
+#   CRLF, and `bash script.sh` then fails with:
+#
+#       $'\r': command not found
+#
+#   That broke all four Windows matrix jobs in CI run 38857968711. Line endings
+#   are part of the contract here, not a local preference, so they are pinned
+#   in the repository instead of relying on each machine's Git config.
+
+# Default: normalise text to LF in the repository.
+* text=auto eol=lf
+
+# Shell scripts are executed by POSIX shells, including on Windows via Git Bash
+# and MSYS2. They MUST be LF.
+*.sh          text eol=lf
+*.bash        text eol=lf
+*.zsh         text eol=lf
+*.ksh         text eol=lf
+
+# PowerShell is native to Windows and expects CRLF.
+*.ps1         text eol=crlf
+*.psm1        text eol=crlf
+*.psd1        text eol=crlf
+
+# Python, YAML and markup: always LF.
+*.py          text eol=lf
+*.pyi         text eol=lf
+*.yml         text eol=lf
+*.yaml        text eol=lf
+*.json        text eol=lf
+*.toml        text eol=lf
+*.cfg         text eol=lf
+*.ini         text eol=lf
+*.md          text eol=lf
+*.txt         text eol=lf
+*.rst         text eol=lf
+
+# Windows command scripts.
+*.bat         text eol=crlf
+*.cmd         text eol=crlf
+
+# Binary assets: never touch.
+*.png         binary
+*.jpg         binary
+*.jpeg        binary
+*.gif         binary
+*.ico         binary
+*.pdf         binary
+*.zip         binary
+*.gz          binary
+*.whl         binary
+*.so          binary
+*.dll         binary
+*.exe         binary
+
+# Lock files are generated; keep them out of diffs, but do track them.
+uv.lock       -diff linguist-generated

@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+dependencies = [
+    "ruff",
+    "mypy",
+    "flake8",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "pytest-mock",
+    "pytest-xdist",
+    "pylint",
+    "pyright",
+    "typer",
+    "rich",
+    "tqdm",
+    "requests",
+    "dnspython",
+    "graphql-core",
+    "fastapi",
+    "uvicorn",
+    "openai",
+    "pandas",
+    "pyarrow",
+    "openpyxl",
+    "lxml",
+    "beautifulsoup4",
+    "html5lib",
+    "python-docx",
+    "pdfplumber",
+    "regex",
+    "pypinyin",
+    "nltk",
+    "tree-sitter-language-pack",
+    "sympy",
+    "networkx",
+    "pillow",
+    "plotly",
+    "matplotlib",
+    "segno",
+    "playwright",
+    "asyncssh",
+    "asyncvnc",
+    "jupyterhub",
+    "jupyter",
+    "jupyterlab",
+    "marimo",
+    "streamlit",
+    "pynput",
+]
+name = "macos-py314"
+version = "0.1.0"
+description = "myjupyter toolchain for unix/macos on Python 3.14"
+readme = "README.md"
+requires-python = ">=3.14"
+authors = [{ name = "fufu", email = "fufurobot@outlook.com" }]
+license = { text = "MIT" }
+
+# NOTE: runtime dependencies are intentionally NOT declared here.
+# They live in requirements*.txt so they can be split by buildability, and
+# because this package is only a buildable anchor for the target directory:
+# CI's acceptance bar is that `python -m build` succeeds for every target.
+
+[project.optional-dependencies]
+dev = ["ruff", "mypy", "pytest"]
+
+[tool.setuptools]
+packages = []
+py-modules = ["toolchain"]
