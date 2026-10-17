@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import subprocess
 import sys
 import tomllib
 
@@ -344,3 +345,96 @@ class TestReleaseLogic:
         assert rel.plan_release("0.1.0", "0.1.0") == "update"
         assert rel.plan_release("0.1.0", "0.2.0") == "create"
         assert rel.plan_release(None, "0.1.0") == "create"
+
+
+# ==========================================================================
+# Regressions found by the first real CI run of sprint 2
+# ==========================================================================
+
+class TestLockfilesAreTracked:
+    """CI run 39013875084: unix/archlinux/3.14/uv.lock was absent on the runner.
+
+    Cause: the old distro-level .gitignore carried ``uv.lock`` (correct back
+    when locks were regenerated per machine, wrong now that the lock IS the
+    drift signal). A committed lock is what ``uv sync --upgrade`` diffs.
+    """
+
+    @pytest.mark.parametrize("platform,distro,version", ALL_TARGETS)
+    def test_no_gitignore_excludes_uv_lock(self, platform, distro, version):
+        d = REPO_ROOT / platform / distro / version
+        for name in (".gitignore",):
+            path = d / name
+            if not path.is_file():
+                continue
+            lines = [
+                l.split("#")[0].strip() for l in path.read_text(encoding="utf-8").splitlines()
+            ]
+            assert "uv.lock" not in lines, (
+                f"{platform}/{distro}/{version}/.gitignore excludes uv.lock, "
+                "which is now the drift signal and must be committed"
+            )
+
+    @pytest.mark.parametrize("platform,distro,version", ALL_TARGETS)
+    def test_uv_lock_is_tracked_by_git(self, platform, distro, version):
+        rel = f"{platform}/{distro}/{version}/uv.lock"
+        result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", rel],
+            cwd=REPO_ROOT, capture_output=True, text=True,
+        )
+        assert result.returncode == 0, f"{rel} is not tracked by git"
+
+    @pytest.mark.parametrize("platform,distro,version", ALL_TARGETS)
+    def test_uv_lock_is_not_gitignored(self, platform, distro, version):
+        rel = f"{platform}/{distro}/{version}/uv.lock"
+        result = subprocess.run(
+            ["git", "check-ignore", "-q", rel], cwd=REPO_ROOT, capture_output=True
+        )
+        assert result.returncode != 0, f"{rel} is gitignored"
+
+
+class TestPowershellScript:
+    """CI run 39013875084: the Windows smoke step died with a ParserError.
+
+    Backslash line continuations are a *bash* construct; PowerShell uses a
+    backtick and treats ``--`` as a unary operator. The embedded script must
+    therefore be written as plain single-line commands.
+    """
+
+    def _workflow(self) -> str:
+        return (WORKFLOWS / "matrix.yml").read_text(encoding="utf-8")
+
+    def _run_blocks(self, shell: str) -> list[str]:
+        """Return the run: blocks of steps using the given shell."""
+        data = yaml.safe_load(self._workflow())
+        blocks = []
+        for job in data["jobs"].values():
+            if not isinstance(job, dict):
+                continue
+            for step in job.get("steps", []) or []:
+                if step.get("shell") == shell and "run" in step:
+                    blocks.append(step["run"])
+        return blocks
+
+    def test_no_backslash_continuations_in_powershell(self):
+        for block in self._run_blocks("pwsh"):
+            for line in block.splitlines():
+                assert not line.rstrip().endswith("\\"), (
+                    f"backslash continuation is invalid in PowerShell: {line!r}"
+                )
+            assert " \\\n" not in block
+
+    def test_powershell_blocks_are_syntactically_plausible(self):
+        for block in self._run_blocks("pwsh"):
+            # A line starting with `--` after a continuation is the exact
+            # failure mode observed; it can never be valid on its own.
+            for line in block.splitlines():
+                assert not line.strip().startswith("--"), (
+                    f"dangling continuation argument: {line!r}"
+                )
+
+    def test_powershell_does_not_use_posix_pipes_into_out_file(self):
+        """`cmd | Out-File &` is wrong; redirect with `*>` or Start-Job."""
+        for block in self._run_blocks("pwsh"):
+            assert "Out-File -Encoding utf8 jupyterlab.log &" not in block or (
+                "*>&1" in block or "Start-Process" in block
+            )
