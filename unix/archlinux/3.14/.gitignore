@@ -1,0 +1,7 @@
+# Per-distro runtime state; never commit.
+jupyterhub.sqlite
+jupyterhub_cookie_secret
+jupyterhub-proxy.pid
+jhlog.log
+uv.lock
+.venv/

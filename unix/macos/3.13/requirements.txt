@@ -1,0 +1,60 @@
+# Core toolchain - expected to build on every supported target.
+# Keep this list portable: nothing here may require an OS-specific native
+# library, or the matrix will be red for reasons that are not the point.
+
+# --- dev tooling -----------------------------------------------------------
+ruff
+mypy
+flake8
+pytest
+pytest-asyncio
+pytest-cov
+pytest-mock
+pytest-xdist
+pylint
+pyright
+
+# --- cli / tui -------------------------------------------------------------
+typer
+rich
+tqdm
+
+# --- networking ------------------------------------------------------------
+requests
+dnspython
+graphql-core
+fastapi
+uvicorn
+openai
+
+# --- data ------------------------------------------------------------------
+pandas
+pyarrow
+openpyxl
+lxml
+beautifulsoup4
+html5lib
+python-docx
+pdfplumber
+
+# --- nlp -------------------------------------------------------------------
+regex
+pypinyin
+nltk
+tree-sitter-language-pack
+
+# --- math ------------------------------------------------------------------
+sympy
+networkx
+
+# --- imaging / plotting ----------------------------------------------------
+pillow
+plotly
+matplotlib
+segno
+
+# --- automation ------------------------------------------------------------
+playwright
+asyncssh
+asyncvnc
+pynput

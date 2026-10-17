@@ -1,0 +1,213 @@
+name: matrix
+
+# Builds EVERY <platform>/<distro>/<python-version> target on real GitHub
+# runners. This is the primary CI: nothing is built locally, so the matrix is
+# the only source of truth about what actually builds.
+#
+# Acceptance bar per target:
+#   1. pyproject.toml exists and `python -m build` succeeds
+#   2. requirements.txt (core) installs
+#   Unix-only extras and the experimental set are allowed to fail by design.
+#
+# The matrix is generated from scripts/check_layout.py, so it cannot drift
+# from the directory layout.
+
+# Branch model, all in one place:
+#   dev  -> fast tier only (one python per distro) - quick feedback
+#   main -> fast tier + full tier (all 50 targets) + Pages
+#   tags -> release.yml publishes artifacts
+on:
+  push:
+    branches: [dev, main]
+    tags: ["v*.*.*"]
+  pull_request:
+  schedule:
+    # Weekly deep run, Mondays 03:17 UTC.
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      include_optional:
+        description: "Also build the optional (unix-only + experimental) sets"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Cheap gate: the layout must be valid before spending runner minutes.
+  generate:
+    name: generate matrix
+    runs-on: ubuntu-24.04
+    outputs:
+      fast: ${{ steps.m.outputs.fast }}
+      full: ${{ steps.m.outputs.full }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate layout
+        run: python3 scripts/check_layout.py
+      - name: Emit matrices
+        id: m
+        run: |
+          FAST=$(python3 scripts/check_layout.py --matrix fast)
+          FULL=$(python3 scripts/check_layout.py --matrix full)
+          echo "fast=$FAST" >> "$GITHUB_OUTPUT"
+          echo "full=$FULL" >> "$GITHUB_OUTPUT"
+          echo "fast rows: $(echo "$FAST" | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')"
+          echo "full rows: $(echo "$FULL" | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')"
+
+  # Fast matrix: one Python per distro. Runs on every push/PR.
+  build:
+    name: ${{ matrix.distro }} py${{ matrix.python }}
+    needs: generate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.generate.outputs.fast) }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python ${{ matrix.python }}
+        run: uv python install ${{ matrix.python }}
+
+      - name: Show target
+        run: |
+          echo "target: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}"
+          ls -la "${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}"
+
+      # Acceptance check 1: the target's pyproject.toml must build.
+      - name: Build wheel from pyproject.toml
+        working-directory: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}
+        run: |
+          uv build --python ${{ matrix.python }} --wheel
+          ls -la dist/
+
+      # Acceptance check 2: the core requirement set installs.
+      # `uv run --with-requirements` is used instead of a hand-made venv because
+      # a venv's interpreter is `.venv/bin/python` on POSIX but
+      # `.venv\Scripts\python.exe` on Windows; uv abstracts that away.
+      - name: Resolve + install core requirements
+        working-directory: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}
+        run: |
+          uv run --python ${{ matrix.python }} \
+                 --with-requirements requirements.txt \
+                 python -c "import sys; print('python', sys.version)"
+
+      - name: Smoke test the installed core set
+        working-directory: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}
+        run: |
+          uv run --python ${{ matrix.python }} \
+                 --with-requirements requirements.txt \
+                 python -c "import pandas, sympy, requests, typer, rich, pytest, toolchain; print('core imports OK for', toolchain.TARGET)"
+
+  # Full matrix: every distro x every supported Python (3.10..3.14).
+  # Only on main and manual dispatch, because it is 50 jobs.
+  build-full:
+    name: full ${{ matrix.distro }} py${{ matrix.python }}
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    needs: generate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.generate.outputs.full) }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install Python ${{ matrix.python }}
+        run: uv python install ${{ matrix.python }}
+      - name: Build wheel from pyproject.toml
+        working-directory: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}
+        run: uv build --python ${{ matrix.python }} --wheel
+      - name: Resolve + install core requirements
+        working-directory: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}
+        run: |
+          uv run --python ${{ matrix.python }} \
+                 --with-requirements requirements.txt \
+                 python -c "import sys; print('python', sys.version)"
+
+  # Unit tests for the repo's own tooling (layout, scaffolding, CI).
+  unit:
+    name: unit tests (${{ matrix.os }})
+    needs: generate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Run tests
+        run: uv run --python 3.12 --with pytest --with pyyaml pytest tests/ -q
+
+  # Optional sets: unix-only jupyterhub and the experimental list. These are
+  # allowed to fail - that is the entire point of splitting them out.
+  optional:
+    name: optional ${{ matrix.distro }} py${{ matrix.python }}
+    needs: [generate, build]
+    if: github.event_name == 'workflow_dispatch' && inputs.include_optional
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.generate.outputs.fast) }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install Python ${{ matrix.python }}
+        run: uv python install ${{ matrix.python }}
+
+      - name: Install unix-only jupyterhub set
+        if: matrix.platform == 'unix'
+        continue-on-error: true
+        working-directory: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}
+        run: |
+          uv run --python ${{ matrix.python }} \
+                 --with-requirements requirements-jupyterhub.txt \
+                 python -c "import jupyterhub; print('jupyterhub', jupyterhub.__version__)"
+
+      - name: Install experimental set (expected to have failures)
+        continue-on-error: true
+        working-directory: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}
+        run: |
+          uv run --python ${{ matrix.python }} \
+                 --with-requirements requirements.experimental.txt \
+                 python -c "import chm; print('pychm importable')"
+          echo "::notice::the experimental set installed successfully this time"
+
+  # Publish the dependency-matrix site, only from main.
+  pages:
+    name: GitHub Pages
+    needs: generate
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yml

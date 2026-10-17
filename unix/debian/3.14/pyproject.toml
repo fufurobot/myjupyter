@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "debian-py314"
+version = "0.1.0"
+description = "myjupyter toolchain for unix/debian on Python 3.14"
+readme = "README.md"
+requires-python = ">=3.14,<3.15"
+authors = [{ name = "fufu", email = "fufurobot@outlook.com" }]
+license = { text = "MIT" }
+
+# NOTE: runtime dependencies are intentionally NOT declared here.
+# They live in requirements*.txt so they can be split by buildability, and
+# because this package is only a buildable anchor for the target directory:
+# CI's acceptance bar is that `python -m build` succeeds for every target.
+
+[project.optional-dependencies]
+dev = ["ruff", "mypy", "pytest"]
+
+[tool.setuptools]
+packages = []
+py-modules = ["toolchain"]
