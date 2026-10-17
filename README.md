@@ -103,12 +103,13 @@ $ python3 scripts/scaffold_targets.py --force  # regenerate everything
 
 | Workflow | Trigger | Purpose |
 | --- | --- | --- |
-| `matrix.yml` | push / PR | **Primary CI.** Builds every target on real runners: `uv build` + core requirements. Fast tier on `dev`/PRs, full tier (all 50) on `main`. |
+| `matrix.yml` | `dev`, `main`, PRs, tags, weekly | **Primary CI.** Builds every target on real runners: `uv build` + core requirements + import smoke test. Fast tier (one Python per distro) everywhere; full 50-target tier on `main`, tags and the weekly run. Also runs the unit tests and, from `main`, publishes Pages. |
 | `upstream-update.yml` | daily 04:41 UTC | Re-resolves every target's core requirements against upstream and opens a PR **only when packages actually changed**. |
-| `dev.yml` | push to `dev` | Fast checks. |
-| `full.yml` | push to `main` | Full checks + Pages. |
 | `pages.yml` | reusable | Publishes the matrix site. |
 | `release.yml` | tag `v*.*.*` | Full verify, then publishes release artifacts. |
+
+Branch model: `dev` = fast tier. `main` = fast + full + Pages. A tag
+`v*.*.*` publishes release artifacts.
 
 The matrix is generated from `check_layout.py`, so it can never drift from the
 directory layout. Experimental and unix-only sets run in an `optional` tier

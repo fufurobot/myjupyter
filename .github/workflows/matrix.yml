@@ -12,10 +12,18 @@ name: matrix
 # The matrix is generated from scripts/check_layout.py, so it cannot drift
 # from the directory layout.
 
+# Branch model, all in one place:
+#   dev  -> fast tier only (one python per distro) - quick feedback
+#   main -> fast tier + full tier (all 50 targets) + Pages
+#   tags -> release.yml publishes artifacts
 on:
   push:
     branches: [dev, main]
+    tags: ["v*.*.*"]
   pull_request:
+  schedule:
+    # Weekly deep run, Mondays 03:17 UTC.
+    - cron: "17 3 * * 1"
   workflow_dispatch:
     inputs:
       include_optional:
@@ -108,7 +116,7 @@ jobs:
   # Only on main and manual dispatch, because it is 50 jobs.
   build-full:
     name: full ${{ matrix.distro }} py${{ matrix.python }}
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     needs: generate
     runs-on: ${{ matrix.os }}
     strategy:
@@ -134,6 +142,24 @@ jobs:
           uv run --python ${{ matrix.python }} \
                  --with-requirements requirements.txt \
                  python -c "import sys; print('python', sys.version)"
+
+  # Unit tests for the repo's own tooling (layout, scaffolding, CI).
+  unit:
+    name: unit tests (${{ matrix.os }})
+    needs: generate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Run tests
+        run: uv run --python 3.12 --with pytest --with pyyaml pytest tests/ -q
 
   # Optional sets: unix-only jupyterhub and the experimental list. These are
   # allowed to fail - that is the entire point of splitting them out.
@@ -174,3 +200,14 @@ jobs:
                  --with-requirements requirements.experimental.txt \
                  python -c "import chm; print('pychm importable')"
           echo "::notice::the experimental set installed successfully this time"
+
+  # Publish the dependency-matrix site, only from main.
+  pages:
+    name: GitHub Pages
+    needs: generate
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yml

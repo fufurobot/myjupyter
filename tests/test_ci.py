@@ -61,7 +61,7 @@ def workflows() -> dict[str, dict]:
 # Workflow presence and validity
 # --------------------------------------------------------------------------
 
-REQUIRED = ["dev", "full", "matrix", "pages", "release", "upstream-update"]
+REQUIRED = ["matrix", "pages", "release", "upstream-update"]
 
 
 class TestWorkflowPresence:
@@ -247,11 +247,17 @@ class TestSiteBuild:
 # --------------------------------------------------------------------------
 
 class TestBranchModel:
-    def test_dev_triggers_on_dev(self, workflows):
-        assert "dev" in workflow_path("dev").read_text(encoding="utf-8")
+    def test_matrix_triggers_on_dev_and_main(self, workflows):
+        assert triggers(workflows["matrix"])["push"]["branches"] == ["dev", "main"]
 
-    def test_full_triggers_on_main(self, workflows):
-        assert triggers(workflows["full"])["push"]["branches"] == ["main"]
+    def test_matrix_also_triggers_on_tags(self, workflows):
+        tags = triggers(workflows["matrix"])["push"]["tags"]
+        assert any(t.startswith("v") for t in tags)
+
+    def test_matrix_has_a_weekly_schedule(self, workflows):
+        sched = triggers(workflows["matrix"])["schedule"]
+        for entry in sched:
+            assert len(entry["cron"].split()) == 5
 
     def test_release_triggers_on_tags(self, workflows):
         trig = triggers(workflows["release"])
@@ -259,6 +265,16 @@ class TestBranchModel:
 
     def test_pages_is_reusable(self, workflows):
         assert "workflow_call" in triggers(workflows["pages"])
+
+    def test_matrix_calls_pages_on_main(self, workflows):
+        jobs = workflows["matrix"]["jobs"]
+        assert any(
+            isinstance(j, dict) and "pages" in str(j.get("uses", ""))
+            for j in jobs.values()
+        )
+
+    def test_matrix_runs_unit_tests(self, workflows):
+        assert "unit" in workflows["matrix"]["jobs"]
 
 
 # --------------------------------------------------------------------------
