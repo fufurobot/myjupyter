@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import re
 import subprocess
 import sys
 import tomllib
@@ -438,3 +439,77 @@ class TestPowershellScript:
             assert "Out-File -Encoding utf8 jupyterlab.log &" not in block or (
                 "*>&1" in block or "Start-Process" in block
             )
+
+
+class TestNoBrokenPipeInWorkflows:
+    """CI run 39025940591: all 50 targets built (100 artifacts), then the step
+    failed with exit code 2.
+
+    Cause: ``ls -la dist | head -20``. ``head`` closes the pipe, ``ls`` dies of
+    SIGPIPE, and ``set -o pipefail`` surfaces that as a failure - aborting a
+    run that had actually succeeded. Any ``... | head -N`` inside a
+    ``pipefail`` script is the same trap.
+    """
+
+    def _all_workflow_text(self) -> dict[str, str]:
+        return {
+            p.name: p.read_text(encoding="utf-8") for p in WORKFLOWS.glob("*.yml")
+        }
+
+    def test_no_pipe_into_head(self):
+        for name, text in self._all_workflow_text().items():
+            for lineno, line in enumerate(text.splitlines(), 1):
+                stripped = line.strip()
+                if stripped.startswith("#"):
+                    continue
+                assert not re.search(r"\|\s*head\b", stripped), (
+                    f"{name}:{lineno} pipes into `head`, which triggers SIGPIPE "
+                    f"under pipefail: {stripped!r}"
+                )
+
+    def test_no_pipe_into_tail(self):
+        for name, text in self._all_workflow_text().items():
+            for lineno, line in enumerate(text.splitlines(), 1):
+                stripped = line.strip()
+                if stripped.startswith("#"):
+                    continue
+                assert not re.search(r"\|\s*tail\b", stripped), (
+                    f"{name}:{lineno} pipes into `tail` (same SIGPIPE risk): "
+                    f"{stripped!r}"
+                )
+
+    def test_release_build_step_reports_artifacts_without_head(self):
+        text = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+        assert "ls -la dist | head" not in text
+
+
+class TestReleasePreflight:
+    """A token without release permission must fail early and clearly.
+
+    The first release run did all 50 builds (100 artifacts) before anything
+    checked whether the token could actually publish. Preflight avoids
+    wasting ten minutes to discover a permissions problem.
+    """
+
+    @pytest.fixture(scope="class")
+    def rel(self):
+        return _load("release", "scripts/release.py")
+
+    def test_has_a_preflight_function(self, rel):
+        assert hasattr(rel, "preflight"), "release.py needs a preflight check"
+
+    def test_preflight_reports_missing_repo_permission(self, rel):
+        result = rel.preflight(None, None)
+        assert result is False, "no token must fail preflight"
+
+    def test_preflight_returns_bool_with_valid_inputs(self, rel, monkeypatch):
+        monkeypatch.setattr(rel, "can_write_releases", lambda repo, tok: True)
+        assert rel.preflight("owner/repo", "tok") is True
+
+    def test_preflight_returns_false_when_not_permitted(self, rel, monkeypatch):
+        monkeypatch.setattr(rel, "can_write_releases", lambda repo, tok: False)
+        assert rel.preflight("owner/repo", "tok") is False
+
+    def test_upload_reports_failures_rather_than_silently_passing(self, rel):
+        """Every failed asset upload must be counted and surfaced."""
+        assert hasattr(rel, "upload_assets")

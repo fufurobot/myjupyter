@@ -57,7 +57,14 @@ jobs:
         if: steps.upgrade.outputs.changed == 'true'
         run: |
           set -euo pipefail
-          for req in $(git diff --name-only | grep '^.*/requirements.txt$' | head -5); do
+          # Read into an array first: piping into `head` under `set -o pipefail`
+          # aborts the step via SIGPIPE once head exits.
+          reqs=()
+          while IFS= read -r f; do
+            reqs+=("$f")
+            [ "${#reqs[@]}" -ge 5 ] && break
+          done < <(git diff --name-only -- '*requirements.txt' | sort)
+          for req in "${reqs[@]:-}"; do
             echo "::group::verifying $req"
             uv run --python 3.13 --with-requirements "$req" \
               python -c "import sys; print('ok', sys.version)"

@@ -69,6 +69,14 @@ jobs:
       - name: Install Python
         run: uv python install 3.13
 
+      # Fail fast on a permissions problem, BEFORE spending ten minutes on
+      # 50 builds. The first release run learned this the expensive way.
+      - name: Preflight (token can publish releases)
+        env:
+          GITHUB_TOKEN: ${{ secrets.DAILY_PR_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/release.py preflight --repo "${{ github.repository }}"
+
       # Build EVERY target so the published assets are exactly `uv build` output.
       - name: Build all targets
         run: |
@@ -84,8 +92,22 @@ jobs:
             echo "::endgroup::"
           done < <(find unix windows -mindepth 3 -maxdepth 3 -name pyproject.toml | sort)
           echo "processed $built target(s)"
-          echo "artifacts: $(ls dist | wc -l)"
-          ls -la dist | head -20
+          echo "artifacts: $(find dist -type f | wc -l)"
+          # NOTE: never pipe into `head`/`tail` here. They close the pipe early,
+          # the producer dies of SIGPIPE, and `set -o pipefail` then fails a run
+          # that actually succeeded (CI run 39025940591 did exactly that).
+          echo "first artifacts:"
+          first=()
+          while IFS= read -r f; do
+            first+=("$f")
+            [ "${#first[@]}" -ge 5 ] && break
+          done < <(find dist -type f -name '*.whl' | sort)
+          printf '  %s\n' "${first[@]}"
+          # Fail loudly if a target produced nothing at all.
+          if [ "$built" -eq 0 ] || [ "$(find dist -type f | wc -l)" -eq 0 ]; then
+            echo "::error::no artifacts were produced; refusing to publish an empty release"
+            exit 1
+          fi
 
       # Decide create-vs-update from the current version and existing releases.
       - name: Plan release
@@ -114,6 +136,6 @@ jobs:
             echo "- action: **${{ steps.plan.outputs.action }}**"
             echo ""
             echo '```'
-            ls -la dist || true
+            find dist -maxdepth 1 -type f 2>/dev/null || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

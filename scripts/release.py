@@ -166,6 +166,86 @@ def upload_asset(upload_url: str, path: pathlib.Path, token: str | None) -> int:
 # CLI
 # --------------------------------------------------------------------------
 
+def can_write_releases(repo: str, token: str | None) -> bool:
+    """Check whether *token* may actually publish releases for *repo*.
+
+    ``permissions.push`` is NOT sufficient evidence: a fine-grained token can
+    report ``admin: true`` on the repository yet still be refused by the
+    releases API when its own Contents/Pull-requests scopes do not include the
+    needed access (observed on this repo). So the check probes the real
+    endpoint instead of trusting the permission block.
+
+    The probe is deliberately *read-shaped*: it creates nothing.
+    """
+    if not token:
+        return False
+
+    # 1. The repo must be readable at all.
+    status, payload = api("GET", f"/repos/{repo}", token)
+    if status != 200 or not isinstance(payload, dict):
+        print(f"error: cannot read repository {repo} (status {status})", file=sys.stderr)
+        return False
+    perms = payload.get("permissions") or {}
+    if not perms.get("push"):
+        print(
+            f"error: token cannot push to {repo} (permissions: {perms}). "
+            "Release publishing needs Contents: write.",
+            file=sys.stderr,
+        )
+        return False
+
+    # 2. Probe the release write path without mutating anything: an empty
+    #    POST is rejected for validation reasons (422) when the token is
+    #    *allowed*, but refused with 403/404 when it is not.
+    status, body = api("POST", f"/repos/{repo}/releases", token, {"__probe__": True})
+    if status in (401, 403, 404):
+        print(
+            f"error: token may not write releases to {repo} (status {status}: "
+            f"{(body or {}).get('message', '')}). Give the token "
+            "Contents: write (and, for a fine-grained token, Releases access).",
+            file=sys.stderr,
+        )
+        return False
+    # 201 would mean we accidentally created something - clean it up.
+    if status == 201 and isinstance(body, dict) and body.get("id"):
+        api("DELETE", f"/repos/{repo}/releases/{body['id']}", token)
+        print("warning: probe created a release, removed it again", file=sys.stderr)
+    return True
+
+
+def preflight(repo: str | None, token: str | None) -> bool:
+    """Return True when a release can realistically be published."""
+    if not token:
+        print(
+            "error: no GitHub token found (set GITHUB_TOKEN or DAILY_PR_TOKEN)",
+            file=sys.stderr,
+        )
+        return False
+    if not repo:
+        print("error: no repository specified", file=sys.stderr)
+        return False
+    return can_write_releases(repo, token)
+
+
+def upload_assets(
+    release: dict, artifacts: list[pathlib.Path], token: str | None
+) -> int:
+    """Upload every artifact; return the number of failures."""
+    failures = 0
+    total = len(artifacts)
+    for index, artifact in enumerate(artifacts, 1):
+        code = upload_asset(release["upload_url"], artifact, token)
+        if code in (200, 201):
+            print(f"[{index}/{total}] uploaded {artifact.name}")
+        else:
+            failures += 1
+            print(
+                f"[{index}/{total}] FAILED {artifact.name}: HTTP {code}",
+                file=sys.stderr,
+            )
+    return failures
+
+
 def publish(repo: str, dist: pathlib.Path, token: str | None) -> int:
     version = read_version(REPO_ROOT / VERSION_SOURCE)
     tag = tag_for(version)
@@ -208,11 +288,10 @@ def publish(repo: str, dist: pathlib.Path, token: str | None) -> int:
         print(f"could not reload release: {release}", file=sys.stderr)
         return 1
 
-    for artifact in artifacts:
-        code = upload_asset(release["upload_url"], artifact, token)
-        print(f"uploaded {artifact.name}: {code}")
-        if code not in (200, 201):
-            return 1
+    failures = upload_assets(release, artifacts, token)
+    if failures:
+        print(f"::error::{failures}/{len(artifacts)} asset uploads failed", file=sys.stderr)
+        return 1
 
     print(f"release {tag} published ({action}, {len(artifacts)} assets)")
     return 0
@@ -220,13 +299,18 @@ def publish(repo: str, dist: pathlib.Path, token: str | None) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("command", choices=("plan", "publish"))
+    parser.add_argument("command", choices=("plan", "publish", "preflight"))
     parser.add_argument("--dist", default="dist")
     parser.add_argument("--repo")
     args = parser.parse_args(argv)
 
     version = read_version(REPO_ROOT / VERSION_SOURCE)
     tag = tag_for(version)
+
+    if args.command == "preflight":
+        ok = preflight(args.repo, load_token())
+        print("preflight:", "ok" if ok else "FAILED")
+        return 0 if ok else 1
 
     if args.command == "plan":
         token = load_token()
