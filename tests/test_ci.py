@@ -60,7 +60,7 @@ def workflows() -> dict[str, dict]:
 # Workflow presence and validity
 # --------------------------------------------------------------------------
 
-REQUIRED = ["matrix", "release", "upstream-update"]
+REQUIRED = ["matrix", "release", "upstream-update", "pypi-index"]
 
 
 class TestWorkflowPresence:
@@ -151,6 +151,22 @@ class TestMatrixWorkflow:
         )
         assert ".venv-ci/bin/python" not in code
         assert "uv run" in code, "uv run abstracts the venv layout"
+
+
+class TestPagesIndexWorkflow:
+    def test_builds_missing_wheels_for_windows_and_unix(self, workflows):
+        text = workflow_path("pypi-index").read_text(encoding="utf-8")
+        assert "windows-2022" in text
+        assert "ubuntu-24.04" in text
+        assert "macos-14" in text
+        assert "scripts/pypi_index.py" in text
+
+    def test_generates_and_deploys_pep503_index(self, workflows):
+        text = workflow_path("pypi-index").read_text(encoding="utf-8")
+        assert "scripts/generate_pypi_index.py" in text
+        assert "actions/upload-pages-artifact" in text
+        assert "actions/deploy-pages" in text
+        assert workflows["pypi-index"]["permissions"]["pages"] == "write"
 
 
 # --------------------------------------------------------------------------
