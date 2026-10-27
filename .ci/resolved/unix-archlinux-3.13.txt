@@ -68,7 +68,7 @@ jinja2==3.1.6
 jiter==0.18.0
 joblib==1.6.0
 json5==0.17.3
-jsonpointer==3.5
+jsonpointer==3.6
 jsonschema-specifications==2025.9.1
 jsonschema==4.26.0
 jupyter-builder==1.2.3
@@ -118,7 +118,7 @@ notebook-shim==0.2.4
 notebook==7.6.3
 numpy==2.5.4
 oauthlib==4.0.0
-openai==3.37.0
+openai==3.39.0
 openpyxl==3.1.5
 opentelemetry-api==1.45.1
 packaging==26.3
@@ -131,7 +131,7 @@ pdfminer-six==20260107
 pdfplumber==0.11.10
 pexpect==4.9.0
 pillow==13.0.0
-platformdirs==4.13.5
+platformdirs==4.13.6
 playwright==1.64.1
 plotly==7.1.0
 pluggy==1.7.0
@@ -159,7 +159,7 @@ pyparsing==3.3.3
 pypdfium2==5.14.0
 pypinyin==0.55.0
 pyright==1.1.414
-pytest-asyncio==1.4.0
+pytest-asyncio==1.4.1
 pytest-cov==7.1.0
 pytest-mock==3.17.0
 pytest-xdist==3.8.0
@@ -179,7 +179,7 @@ rfc3986-validator==0.1.1
 rfc3987-syntax==1.1.0
 rich==15.0.0
 rpds-py==2026.9.1
-ruff==0.17.2
+ruff==0.17.3
 segno==1.6.6
 send2trash==2.1.0
 shellingham==1.5.4
