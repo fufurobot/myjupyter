@@ -111,7 +111,7 @@ $ python3 scripts/scaffold_targets.py --force  # regenerate everything
 
 | Workflow | Trigger | Purpose |
 | --- | --- | --- |
-| `matrix.yml` | `dev`, `main`, PRs, weekly | **Primary CI.** Builds every target on real runners: `uv build`, core requirements, and **Jupyter startability**. Fast tier everywhere; full 50-target tier on `main` and the weekly run. |
+| `matrix.yml` | `dev`, PRs, weekly, after main index deploy | **Primary CI.** Builds every target on real runners, then uses `uv sync --no-build` against PyPI and the supplemental index to prove requirements resolve without source compilation; also checks **Jupyter startability**. Fast tier everywhere; full 50-target tier after the `main` index deploy and on the weekly run. |
 | `release.yml` | every push to `main` | Publishes everything under `uv build` as a release, keyed by the `pyproject.toml` version. |
 | `upstream-update.yml` | daily 04:41 UTC | Re-resolves every target against upstream and opens a PR **only when packages actually changed**. |
 | `pypi-index.yml` | every push to `main`, manual | Builds requirement wheels missing from PyPI for Windows, Linux, and macOS, then publishes a PEP 503 index to GitHub Pages. |

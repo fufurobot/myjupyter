@@ -124,7 +124,19 @@ class TestMatrixWorkflow:
 
     def test_matrix_installs_core_requirements(self):
         text = workflow_path("matrix").read_text(encoding="utf-8")
-        assert "requirements.txt" in text
+        assert "uv sync" in text
+        assert "--no-build" in text
+        assert "--no-install-project" in text
+
+    def test_matrix_resolves_against_built_wheel_index(self):
+        text = workflow_path("matrix").read_text(encoding="utf-8")
+        assert "myjupyter-built-wheels" in text
+        assert "--index-strategy unsafe-best-match" in text
+        assert "uv run --no-sync" in text
+        full = text.split("  build-full:", maxsplit=1)[1].split("  # Unit tests", maxsplit=1)[0]
+        assert "uv sync" in full
+        assert "--no-build" in full
+        assert "myjupyter-built-wheels" in full
 
     def test_matrix_has_a_fast_and_full_tier(self, workflows):
         jobs = workflows["matrix"]["jobs"]
@@ -234,8 +246,11 @@ class TestUpstreamUpdateLogic:
 # --------------------------------------------------------------------------
 
 class TestBranchModel:
-    def test_matrix_triggers_on_dev_and_main(self, workflows):
-        assert triggers(workflows["matrix"])["push"]["branches"] == ["dev", "main"]
+    def test_matrix_runs_after_main_index_deployment(self, workflows):
+        trig = triggers(workflows["matrix"])
+        assert trig["push"]["branches"] == ["dev"]
+        assert trig["workflow_run"]["workflows"] == ["supplementary PyPI index"]
+        assert "workflow_run.head_branch == 'main'" in workflow_path("matrix").read_text()
 
 
     def test_matrix_has_a_weekly_schedule(self, workflows):

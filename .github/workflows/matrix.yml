@@ -18,7 +18,7 @@ name: matrix
 #   tags -> release.yml publishes artifacts
 on:
   push:
-    branches: [dev, main]
+    branches: [dev]
     tags: ["v*.*.*"]
   pull_request:
   schedule:
@@ -30,6 +30,9 @@ on:
         description: "Also build the optional (unix-only + experimental) sets"
         type: boolean
         default: false
+  workflow_run:
+    workflows: [supplementary PyPI index]
+    types: [completed]
 
 permissions:
   contents: read
@@ -42,6 +45,10 @@ jobs:
   # Cheap gate: the layout must be valid before spending runner minutes.
   generate:
     name: generate matrix
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-24.04
     outputs:
       fast: ${{ steps.m.outputs.fast }}
@@ -82,6 +89,18 @@ jobs:
       - name: Install Python ${{ matrix.python }}
         run: uv python install ${{ matrix.python }}
 
+      - name: Resolve + install core requirements without builds
+        working-directory: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}
+        env:
+          BUILT_WHEEL_INDEX: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/simple/
+        run: |
+          uv sync --python ${{ matrix.python }} \
+            --no-build \
+            --no-install-project \
+            --upgrade \
+            --index "myjupyter-built-wheels=$BUILT_WHEEL_INDEX" \
+            --index-strategy unsafe-best-match
+
       - name: Show target
         run: |
           echo "target: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}"
@@ -94,22 +113,10 @@ jobs:
           uv build --python ${{ matrix.python }} --wheel
           ls -la dist/
 
-      # Acceptance check 2: the core requirement set installs.
-      # `uv run --with-requirements` is used instead of a hand-made venv because
-      # a venv's interpreter is `.venv/bin/python` on POSIX but
-      # `.venv\Scripts\python.exe` on Windows; uv abstracts that away.
-      - name: Resolve + install core requirements
-        working-directory: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}
-        run: |
-          uv run --python ${{ matrix.python }} \
-                 --with-requirements requirements.txt \
-                 python -c "import sys; print('python', sys.version)"
-
       - name: Smoke test the installed core set
         working-directory: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}
         run: |
-          uv run --python ${{ matrix.python }} \
-                 --with-requirements requirements.txt \
+          uv run --no-sync --python ${{ matrix.python }} \
                  python -c "import pandas, sympy, requests, typer, rich, pytest, toolchain; print('core imports OK for', toolchain.TARGET)"
 
       # ----------------------------------------------------------------------
@@ -132,8 +139,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $log = Join-Path $PWD 'jupyterlab.log'
           $args = @(
-            'run', '--python', '${{ matrix.python }}',
-            '--with-requirements', 'requirements.txt',
+            'run', '--no-sync', '--python', '${{ matrix.python }}',
             'jupyter', 'lab',
             '--no-browser',
             '--port=8899',
@@ -182,8 +188,7 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          uv run --python ${{ matrix.python }} \
-                 --with-requirements requirements.txt \
+             uv run --no-sync --python ${{ matrix.python }} \
                  jupyterhub --no-db --log-level=INFO --ip=127.0.0.1 --port=8898 \
                  > jupyterhub.log 2>&1 &
           HUB_PID=$!
@@ -217,7 +222,7 @@ jobs:
   # Only on main and manual dispatch, because it is 50 jobs.
   build-full:
     name: full ${{ matrix.distro }} py${{ matrix.python }}
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'workflow_run' && github.event.workflow_run.head_branch == 'main')
     needs: generate
     runs-on: ${{ matrix.os }}
     strategy:
@@ -237,12 +242,17 @@ jobs:
       - name: Build wheel from pyproject.toml
         working-directory: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}
         run: uv build --python ${{ matrix.python }} --wheel
-      - name: Resolve + install core requirements
+      - name: Resolve core requirements without builds
         working-directory: ${{ matrix.platform }}/${{ matrix.distro }}/${{ matrix.python }}
+        env:
+          BUILT_WHEEL_INDEX: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/simple/
         run: |
-          uv run --python ${{ matrix.python }} \
-                 --with-requirements requirements.txt \
-                 python -c "import sys; print('python', sys.version)"
+          uv sync --python ${{ matrix.python }} \
+            --no-build \
+            --no-install-project \
+            --upgrade \
+            --index "myjupyter-built-wheels=$BUILT_WHEEL_INDEX" \
+            --index-strategy unsafe-best-match
 
   # Unit tests for the repo's own tooling (layout, scaffolding, CI).
   unit:
