@@ -60,7 +60,7 @@ def workflows() -> dict[str, dict]:
 # Workflow presence and validity
 # --------------------------------------------------------------------------
 
-REQUIRED = ["matrix", "release", "upstream-update"]
+REQUIRED = ["matrix", "release", "upstream-update", "pypi-index"]
 
 
 class TestWorkflowPresence:
@@ -124,7 +124,19 @@ class TestMatrixWorkflow:
 
     def test_matrix_installs_core_requirements(self):
         text = workflow_path("matrix").read_text(encoding="utf-8")
-        assert "requirements.txt" in text
+        assert "uv sync" in text
+        assert "--no-build" in text
+        assert "--no-install-project" in text
+
+    def test_matrix_resolves_against_built_wheel_index(self):
+        text = workflow_path("matrix").read_text(encoding="utf-8")
+        assert "myjupyter-built-wheels" in text
+        assert "--index-strategy unsafe-best-match" in text
+        assert "uv run --no-sync" in text
+        full = text.split("  build-full:", maxsplit=1)[1].split("  # Unit tests", maxsplit=1)[0]
+        assert "uv sync" in full
+        assert "--no-build" in full
+        assert "myjupyter-built-wheels" in full
 
     def test_matrix_has_a_fast_and_full_tier(self, workflows):
         jobs = workflows["matrix"]["jobs"]
@@ -151,6 +163,22 @@ class TestMatrixWorkflow:
         )
         assert ".venv-ci/bin/python" not in code
         assert "uv run" in code, "uv run abstracts the venv layout"
+
+
+class TestPagesIndexWorkflow:
+    def test_builds_missing_wheels_for_windows_and_unix(self, workflows):
+        text = workflow_path("pypi-index").read_text(encoding="utf-8")
+        assert "windows-2022" in text
+        assert "ubuntu-24.04" in text
+        assert "macos-14" in text
+        assert "scripts/pypi_index.py" in text
+
+    def test_generates_and_deploys_pep503_index(self, workflows):
+        text = workflow_path("pypi-index").read_text(encoding="utf-8")
+        assert "scripts/generate_pypi_index.py" in text
+        assert "actions/upload-pages-artifact" in text
+        assert "actions/deploy-pages" in text
+        assert workflows["pypi-index"]["permissions"]["pages"] == "write"
 
 
 # --------------------------------------------------------------------------
@@ -218,8 +246,11 @@ class TestUpstreamUpdateLogic:
 # --------------------------------------------------------------------------
 
 class TestBranchModel:
-    def test_matrix_triggers_on_dev_and_main(self, workflows):
-        assert triggers(workflows["matrix"])["push"]["branches"] == ["dev", "main"]
+    def test_matrix_runs_after_main_index_deployment(self, workflows):
+        trig = triggers(workflows["matrix"])
+        assert trig["push"]["branches"] == ["dev"]
+        assert trig["workflow_run"]["workflows"] == ["supplementary PyPI index"]
+        assert "workflow_run.head_branch == 'main'" in workflow_path("matrix").read_text()
 
 
     def test_matrix_has_a_weekly_schedule(self, workflows):

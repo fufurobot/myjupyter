@@ -201,22 +201,19 @@ def _is_curated(platform: str, distro: str) -> bool:
 
 
 # ==========================================================================
-# 2. Jupyter must actually start (Pages is gone)
+# 2. Jupyter must start; missing PyPI wheels use the supplemental index
 # ==========================================================================
 
-class TestNoPages:
-    def test_pages_workflow_is_removed(self):
-        assert not (WORKFLOWS / "pages.yml").exists(), (
-            "the project does not need GitHub Pages"
-        )
+class TestSupplementaryIndex:
+    def test_pages_workflow_exists(self):
+        assert (WORKFLOWS / "pypi-index.yml").is_file()
 
-    def test_no_pages_action_in_any_workflow(self):
-        for path in WORKFLOWS.glob("*.yml"):
-            text = path.read_text(encoding="utf-8")
-            assert "deploy-pages" not in text, f"{path.name} still deploys Pages"
+    def test_index_workflow_deploys_pages(self):
+        text = (WORKFLOWS / "pypi-index.yml").read_text(encoding="utf-8")
+        assert "actions/deploy-pages" in text
 
-    def test_site_generator_is_removed(self):
-        assert not (REPO_ROOT / "scripts" / "build_site.py").exists()
+    def test_pep503_generator_exists(self):
+        assert (REPO_ROOT / "scripts" / "generate_pypi_index.py").is_file()
 
 
 class TestJupyterStartability:
