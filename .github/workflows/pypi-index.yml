@@ -1,0 +1,99 @@
+name: supplementary PyPI index
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-missing-wheels:
+    name: ${{ matrix.os }} Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-24.04, macos-14]
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install index checker dependency
+        run: python -m pip install packaging
+
+      - name: Install chmlib headers (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libchm-dev
+
+      - name: Install chmlib (macOS)
+        if: runner.os == 'macOS'
+        run: brew install chmlib
+
+      - name: Check PyPI wheel availability and build missing wheels (Windows)
+        if: runner.os == 'Windows'
+        run: >-
+          python scripts/pypi_index.py
+          --requirements requirements.txt
+          --wheel-dir dist/wheels
+          --skip pychm
+
+      - name: Check PyPI wheel availability and build missing wheels
+        if: runner.os != 'Windows'
+        run: >-
+          python scripts/pypi_index.py
+          --requirements requirements.txt
+          --wheel-dir dist/wheels
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: missing-wheels-${{ runner.os }}-py${{ matrix.python }}
+          path: dist/wheels/*.whl
+          if-no-files-found: ignore
+          retention-days: 1
+
+  publish-index:
+    name: publish PEP 503 index
+    needs: build-missing-wheels
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: missing-wheels-*
+          path: build/wheels
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install index generator dependency
+        run: python -m pip install packaging
+
+      - name: Generate static package index
+        run: python scripts/generate_pypi_index.py --wheel-dir build/wheels --output-dir site
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
