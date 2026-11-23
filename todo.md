@@ -29,7 +29,8 @@
 - [x] **Dependabot targets `dev`** (`target-branch: dev` on every updater).
 - [x] **Version-keyed releases** on every push to `main`: unchanged version
       updates the release in place, a changed version creates a new one.
-- [x] **GitHub Pages removed** (not needed).
+- [x] **Supplemental PEP 503 wheel index** published to GitHub Pages for
+      dependencies that need a source build on supported OS/Python targets.
 
 ## Backlog
 
