@@ -111,9 +111,10 @@ $ python3 scripts/scaffold_targets.py --force  # regenerate everything
 
 | Workflow | Trigger | Purpose |
 | --- | --- | --- |
-| `matrix.yml` | `dev`, `main`, PRs, weekly | **Primary CI.** Builds every target on real runners: `uv build`, core requirements, and **Jupyter startability**. Fast tier everywhere; full 50-target tier on `main` and the weekly run. |
+| `matrix.yml` | `dev`, PRs, weekly, after main index deploy | **Primary CI.** Builds every target on real runners, then uses `uv sync --no-build` against PyPI and the supplemental index to prove requirements resolve without source compilation; also checks **Jupyter startability**. Fast tier everywhere; full 50-target tier after the `main` index deploy and on the weekly run. |
 | `release.yml` | every push to `main` | Publishes everything under `uv build` as a release, keyed by the `pyproject.toml` version. |
 | `upstream-update.yml` | daily 04:41 UTC | Re-resolves every target against upstream and opens a PR **only when packages actually changed**. |
+| `pypi-index.yml` | every push to `main`, manual | Builds requirement wheels missing from PyPI for Windows, Linux, and macOS, then publishes a PEP 503 index to GitHub Pages. |
 
 Branch model:
 
@@ -122,8 +123,24 @@ Branch model:
 
 ### Jupyter startability is the acceptance bar
 
-There is no GitHub Pages here. What matters is that the environment actually
-runs, so CI proves it rather than asserting it:
+The supplemental GitHub Pages index contains only wheels CI had to build
+because the selected PyPI release lacked a compatible wheel for that OS and
+Python version. Normal dependencies continue to come from PyPI. The index is
+published at `https://<owner>.github.io/<repo>/simple/`; configure the repository
+to use **GitHub Actions** as its Pages source. Add it as an additional uv index:
+
+```toml
+[[tool.uv.index]]
+name = "myjupyter-built-wheels"
+url = "https://<owner>.github.io/<repo>/simple/"
+```
+
+`pychm` is checked on Windows but its source build is skipped there because
+the required native chmlib build is not supported by this repository. CI builds
+it on Linux and macOS after installing the native headers.
+
+Jupyter startability remains part of the CI acceptance bar, so CI proves that
+the environment actually runs:
 
 | platform | check |
 | --- | --- |
